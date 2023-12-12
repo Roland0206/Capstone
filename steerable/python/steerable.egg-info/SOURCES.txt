@@ -1,8 +1,0 @@
-setup.py
-steerablefilter.cpp
-../src/steerableDetector.cpp
-steerable.egg-info/PKG-INFO
-steerable.egg-info/SOURCES.txt
-steerable.egg-info/dependency_links.txt
-steerable.egg-info/requires.txt
-steerable.egg-info/top_level.txt
