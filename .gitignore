@@ -1,2 +1,6 @@
 **/*.tif
-**/steerable/**
+**/steerable/matlab/*.o
+**/steerable/python/build/**
+**/steerable/python/steerable.egg-info/**
+**/steerable/python/*.so
+**/steerable/python/*.cpp
