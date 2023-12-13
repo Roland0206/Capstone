@@ -4,3 +4,4 @@
 **/steerable/python/steerable.egg-info/**
 **/steerable/python/*.so
 **/steerable/python/*.cpp
+**/steerable/matlab/**

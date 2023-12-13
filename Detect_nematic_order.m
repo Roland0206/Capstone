@@ -185,7 +185,7 @@ while choice > 0
     % Steerable Filter
     RawRSize = double(imresize(Raw,[nGridY nGridX],'nearest'));
     MaskRSize = double(imresize(Raw_Mask,[nGridY nGridX],'nearest'));
-    [res,~,~,rot] = steerableDetector(RawRSize,2,Steerable_Sigma, 180);
+    [res,~,~,rot] = steerableDetector(RawRSize,2,Steerable_Sigma,180);
     for i=1:size(rot,3)
         temp = rot(:,:,i);
         temp(MaskRSize==0) = NaN;
@@ -194,7 +194,7 @@ while choice > 0
 
     % Make AngleMap
     AngleMap = zeros(nGridY,nGridX);
-    parfor i=1:nGridY
+    for i=1:nGridY
         for j=1:nGridX
             if Raw_ROIsMask(i,j) == 1            
                 Crop = rot(i-(Pad_Angle-1):i+(Pad_Angle-1),j-(Pad_Angle-1):j+(Pad_Angle-1),:);

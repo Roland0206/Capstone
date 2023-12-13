@@ -134,6 +134,7 @@ std_mean_ccf=std(ccf_all_valid,1,'omitnan'); %/sqrt(div_factor);
  ylim([-0.5 1])
  xlim([0 corr_length])
  set(gca,'FontSize',24)
+ 
 
 
 
