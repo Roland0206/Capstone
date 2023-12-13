@@ -194,7 +194,7 @@ while choice > 0
 
     % Make AngleMap
     AngleMap = zeros(nGridY,nGridX);
-    for i=1:nGridY
+    parfor i=1:nGridY
         for j=1:nGridX
             if Raw_ROIsMask(i,j) == 1            
                 Crop = rot(i-(Pad_Angle-1):i+(Pad_Angle-1),j-(Pad_Angle-1):j+(Pad_Angle-1),:);
