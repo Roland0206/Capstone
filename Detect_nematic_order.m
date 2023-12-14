@@ -175,6 +175,10 @@ end
 % top hat transormation with fixed values for sigma! 
 Raw_Tophat = imtophat(Raw_BGSub,strel('disk',Tophat_Sigma)); 
     
+writematrix(Raw_ROIsMask, '/home/roland/Schreibtisch/Capstone/comparison/Raw_ROIsMask_mat.csv');
+writematrix(Raw_Tophat, '/home/roland/Schreibtisch/Capstone/comparison/Raw_Tophat_mat.csv'); 
+writematrix(Raw_Mask, '/home/roland/Schreibtisch/Capstone/comparison/Raw_Mask_mat.csv');
+writematrix(Raw_BGSub, '/home/roland/Schreibtisch/Capstone/comparison/Raw_BGSub_mat.csv');
 
 % #########################################################################
 %                   MEASURE LOCAL NEMATIC ORDER
@@ -209,6 +213,7 @@ while choice > 0
         end
     end
 
+writematrix(AngleMap, '/home/roland/Schreibtisch/Capstone/comparison/AngleMap_mat.csv');
 
 
 % Display .................................................................
@@ -223,8 +228,10 @@ while choice > 0
     % Steerable filter
     subplot(3,1,2)
     imshow(res,[min(res(:)) max(res(:))])
+    % Save the image as a high-resolution PDF
     title(strcat(...
         'Steerable filter (sigma =',{' '},num2str(Steerable_Sigma),{' '},'pix.)'));
+    writematrix(res, '/home/roland/Schreibtisch/Capstone/comparison/Res_mat.csv');
 
 
      %nematic
@@ -232,24 +239,34 @@ while choice > 0
       subplot(3,1,3); hold on
       imshow(Raw_new,[qLow qHigh])
       hold on
+% Initialize matrices to store xi and yi values
+xi_values = [];
+yi_values = [];
+
 for i=1:nGridY
     for j=1:nGridX
         if Raw_ROIsMask(i,j) == 1  % if ROi is white = of interest
         
             Angle = AngleMap(i,j); % find right angle for window
            
-                k=0;
-                xi = ROI_Size*j+ROI_Size *[-1 1]*cos((90-Angle)*-1*pi/180)+k*cos((Angle)*pi/180);
-                yi= ROI_Size*i+ROI_Size *[-1 1]*sin((90-Angle)*-1*pi/180)+k*sin((Angle)*pi/180);
+            k=0;
+            xi = ROI_Size*j+ROI_Size *[-1 1]*cos((90-Angle)*-1*pi/180)+k*cos((Angle)*pi/180);
+            yi= ROI_Size*i+ROI_Size *[-1 1]*sin((90-Angle)*-1*pi/180)+k*sin((Angle)*pi/180);
+            
+            % Append xi and yi values to the matrices
+            xi_values = [xi_values; xi];
+            yi_values = [yi_values; yi];
             
             plot(xi,yi,'c')
             hold on
                
-            else
+        else
         end
     end
 end
-    
+xi_yi_values = [xi_values yi_values];
+writematrix(xi_yi_values, '/home/roland/Schreibtisch/Capstone/comparison/xi_yi_values_mat.csv');
+
 
     set(gcf, 'Units', 'Normalized', 'OuterPosition', [0 0 1 1]);
    
@@ -289,7 +306,6 @@ end
     end    
     
 end
-
 
 
 % #########################################################################

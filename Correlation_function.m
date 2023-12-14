@@ -83,6 +83,7 @@ for i=1:nGridY
             for k=-kmax:2:kmax
                 xi = ROI_Size*j+max_dist*[-1 1]*cos((90-Angle)*-1*pi/180)+k*cos((Angle)*pi/180); %x-position
                 yi = ROI_Size*i+max_dist*[-1 1]*sin((90-Angle)*-1*pi/180)+k*sin((Angle)*pi/180); %y-position
+
                 linescan1 = improfile( Raw1_Tophat, xi, yi, 2*max_dist+1); %get the profile for substrate 1                           
                 linescan1 = double( linescan1 ); 
                 linescan2 = improfile( Raw2_Tophat, xi, yi, 2*max_dist+1); %get the profile for substrate 2                                 
@@ -94,8 +95,9 @@ for i=1:nGridY
                 linescan2_mean = mean( linescan2 ); 
                 linescan2 = linescan2 - linescan2_mean;
                 
-                %compute unbiased CCF 
-                ccf = ccf + xcorr(linescan1,linescan2,'unbiased')/(2*kmax+1); 
+                %compute unbiased CCF
+                tmp = xcorr(linescan1,linescan2,'unbiased')/(2*kmax+1);
+                ccf = ccf + tmp; 
 
                 % variances of individual linescans (Normalization)
                 var1 = var1 + var( linescan1 ) / (2*kmax+1); 
