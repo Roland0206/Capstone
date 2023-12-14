@@ -49,6 +49,10 @@ Raw2 = imread(RawPath,nChannel2,'Info',info); %substrate 2
 Raw2_BGSub = imgaussfilt(Raw2,GBlur_Sigma); % Gaussian blur #2
 Raw2_Tophat=imtophat(Raw2_BGSub,strel('disk',Tophat_Sigma)); %Raw before
 
+%Raw1_Tophat = imread("/home/roland/Schreibtisch/Capstone/raw1_Tophat.tif")
+%Raw2_Tophat = imread("/home/roland/Schreibtisch/Capstone/raw2_Tophat.tif")
+%AngleMap = readmatrix('/home/roland/Schreibtisch/Capstone/comparison/AngleMap.csv');
+
 %% correlation length and other pre-defintions of values
 % Correlation length
 corr_length=4; % [\mu m]
