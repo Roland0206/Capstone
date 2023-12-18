@@ -45,7 +45,7 @@ ROI_Pad_Corr = (ROI_Size+(ROI_Size*(Pad_Corr-1))*2);
 %                             IMAGE READ IN 
 % #########################################################################
 input_figures_directory = '/home/roland/Schreibtisch/Capstone/Data/';
-image_filename = '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif';
+image_filename = 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif'%'2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif';
 
 full_path = strcat(input_figures_directory, image_filename);
 
@@ -189,7 +189,10 @@ while choice > 0
     % Steerable Filter
     RawRSize = double(imresize(Raw,[nGridY nGridX],'nearest'));
     MaskRSize = double(imresize(Raw_Mask,[nGridY nGridX],'nearest'));
+    writematrix(RawRSize, '/home/roland/Schreibtisch/Capstone/comparison/RawRSize_mat.csv');
+    writematrix(MaskRSize, '/home/roland/Schreibtisch/Capstone/comparison/MaskRSize_mat.csv');
     [res,~,~,rot] = steerableDetector(RawRSize,2,Steerable_Sigma,180);
+    writematrix(res, '/home/roland/Schreibtisch/Capstone/comparison/Res_mat.csv');
     for i=1:size(rot,3)
         temp = rot(:,:,i);
         temp(MaskRSize==0) = NaN;

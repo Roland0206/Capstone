@@ -7,6 +7,7 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
+from IPython import embed
 
 import os
 
@@ -19,34 +20,52 @@ from skimage.transform import resize
 
 
 
-def choose_frame(images):
+def choose_image(tif, n_channels=4):
     """
     Displays an interactive window to choose a frame from a sequence of images.
 
     Parameters:
-    images (.tif): A list of images.
+    tif: tif file.
 
     Returns:
     None
     """
-    # Get the number of frames
-    num_frames = len(images)
+    # Get the number of slices
+    n = len(tif.pages)
+    num_slices = n/n_channels
+    if n%4 != 0:
+        raise ValueError('The number of frames is not a multiple of 4.')
+    
+    
     
     # Create the interactive window to display the frames of the image
     fig, ax = plt.subplots()
-    slider_ax = plt.axes([0.2, 0.02, 0.65, 0.03])  # This creates a new axes where the slider will be
-    frame_slider = Slider(slider_ax, 'slice', 0, num_frames - 1, valinit=0, valstep=1)
-
+    if num_slices > 1:
+        slice_slider_ax = plt.axes([0.2, 0.06, 0.65, 0.03])  
+        slice_slider = Slider(slice_slider_ax, 'slice', 0, num_slices- 1, valinit=0, valstep=1)
+    
+    channel_slider_ax = plt.axes([0.2, 0.02, 0.65, 0.03])  
+    channel_slider = Slider(channel_slider_ax, 'channel', 0, n_channels-1, valinit=0, valstep=1)
     # Display the initial frame
-    image_display = ax.imshow(images[0])
-    def update_frame_image_selection(frame_index, image_display, images, fig):
+    image_0 = tif.pages[0].asarray()
+    image_display = ax.imshow(image_0)
+    def update_image_selection(val):
+        channel_index = int(channel_slider.val)
+        if num_slices > 1:
+            slice_index = int(slice_slider.val)
+        else:
+            slice_index = 0
+        image = np.asarray(tif.pages[4 * slice_index + channel_index].asarray())
         # reset the color limits
-        image_display.set_clim(vmin=images[int(frame_index)].min(), vmax=images[int(frame_index)].max())
+        image_display.set_clim(vmin=image.min(), vmax=image.max())
         # update the displayed image
-        image_display.set_data(images[int(frame_index)])
+        image_display.set_data(image)
         fig.canvas.draw_idle()
-    # Connect the slider to the update function
-    frame_slider.on_changed(lambda val: update_frame_image_selection(val, image_display, images, fig))
+
+    # Connect the sliders to the update function
+    if num_slices > 1:
+        slice_slider.on_changed(update_image_selection)
+    channel_slider.on_changed(update_image_selection)
     plt.show()
     
 def choose_parameter_mask(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_angle):
@@ -67,7 +86,7 @@ def choose_parameter_mask(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, p
     fig = plt.figure()
     
     mask_thresh_slider_ax = plt.axes([0.2, 0.02, 0.65, 0.03])
-    mask_thresh_frame_slider = Slider(mask_thresh_slider_ax, 'mask threshhold', 0, 500, valinit=mask_thresh, valstep=50)
+    mask_thresh_frame_slider = Slider(mask_thresh_slider_ax, 'mask threshhold', 0, 1000, valinit=mask_thresh, valstep=50)
     
     roi_thresh_slider_ax = plt.axes([0.2, 0.08, 0.65, 0.03])
     roi_thresh_frame_slider = Slider(roi_thresh_slider_ax, 'roi threshhold', 0, 0.85, valinit=roi_thresh, valstep=0.1)
@@ -76,10 +95,10 @@ def choose_parameter_mask(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, p
     roi_size_frame_slider = Slider(roi_size_slider_ax, 'roi size', 5, 50, valinit=roi_size, valstep=5)
     
     gblur_sigma_slider_ax = plt.axes([0.2, 0.2, 0.65, 0.03])
-    gblur_sigma_frame_slider = Slider(gblur_sigma_slider_ax, 'roi size', 0.5, 4, valinit=gblur_sigma, valstep=0.5)
+    gblur_sigma_frame_slider = Slider(gblur_sigma_slider_ax, 'gblur sigma', 0.5, 4, valinit=gblur_sigma, valstep=0.5)
     
     _, mask, roi_mask, _ = mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_angle)
-    mask_display, roi_mask_display = plot_mask_background(mask, mask_thresh, roi_mask, roi_size, roi_thresh, fig)
+    mask_display, roi_mask_display, ax1, ax2 = plot_mask_background(mask, mask_thresh, roi_mask, roi_size, roi_thresh, gblur_sigma, fig)
     
     def update_image(val, param):
         nonlocal mask_thresh, roi_thresh, roi_size, gblur_sigma
@@ -94,6 +113,8 @@ def choose_parameter_mask(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, p
         _, mask, roi_mask, _ = mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_angle)
         mask_display.set_data(mask)
         roi_mask_display.set_data(roi_mask)
+        ax1.set_title(fr'mask (thresh. = {mask_thresh}), $\sigma_{{gb}}$ = {gblur_sigma})')
+        ax2.set_title(f'ROIMask (size = {roi_size}, thresh. = {roi_thresh})')
         fig.canvas.draw_idle()
 
     mask_thresh_frame_slider.on_changed(lambda val: update_image(val, 'mask_thresh'))
@@ -128,7 +149,7 @@ def mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_ang
     nGridX = int(np.floor(nX / roi_size))
     raw_crop = raw[:nGridY * roi_size, :nGridX * roi_size]
     nYCrop, nXCrop = raw_crop.shape
-
+    
     # Subtract background
     raw_bgsub = gaussian_filter(raw_crop, sigma=gblur_sigma)  # Gaussian blur
 
@@ -137,6 +158,7 @@ def mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_ang
     raw_mask = raw_bgsub.copy()
     raw_mask[raw_mask < mask_thresh] = 0
     raw_mask[raw_mask >= mask_thresh] = 1
+    #embed()
 
     # Create ROIsMask
     raw_roi_mask = np.zeros((nGridY, nGridX))
@@ -150,7 +172,7 @@ def mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_ang
                     raw_roi_mask[i, j] = 1
     return raw_crop, raw_mask, raw_roi_mask, raw_bgsub
 
-def plot_mask_background(raw_mask, mask_thresh, raw_roi_mask, roi_size, roi_thresh, fig=None):
+def plot_mask_background(raw_mask, mask_thresh, raw_roi_mask, roi_size, roi_thresh, gblur_sigma, fig=None):
     """
     Plots the mask and ROIMask images.
 
@@ -168,29 +190,60 @@ def plot_mask_background(raw_mask, mask_thresh, raw_roi_mask, roi_size, roi_thre
     return_fig = True
     if not fig:
         fig = plt.figure()
-        ax1 = fig.add_subplot(1, 2, 1)
-        plt.title(f'mask (thresh. = {mask_thresh}))')
-        ax2 = fig.add_subplot(1, 2, 2)
-        plt.title(f'ROIMask (size = {roi_size}, thresh. = {roi_thresh})')
-
         return_fig = False
-    else:
-        ax1 = fig.add_subplot(1, 2, 1)
-        plt.title(f'mask')
-        ax2 = fig.add_subplot(1, 2, 2)
-        plt.title(f'ROIMask')
-        
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.set_title(fr'mask (thresh. = {mask_thresh}), $\sigma_{{gb}}$ = {gblur_sigma})')
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.set_title(f'ROIMask (size = {roi_size}, thresh. = {roi_thresh})')
+
     pic1 = ax1.imshow(raw_mask, cmap='gray')
     pic2 = ax2.imshow(raw_roi_mask, cmap='gray')
     
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
     
     if return_fig:
-        return pic1, pic2
+        return pic1, pic2, ax1, ax2
     else:
         plt.show()
+        
+def change_tophat_sigma(raw_bgsub, tophat_sigma, roi_size):
+    """
+    Allows the user to interactively change the value of sigma for the top-hat filter.
 
-def steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle, nX, nY):
+    Parameters:
+        raw_bgsub (ndarray): The background-subtracted image.
+        tophat_sigma (float): The sigma value for the top-hat filter.
+
+    Returns:
+        None
+    """
+    fig = plt.figure()
+    # plot raw_bgsub in one subplot
+    
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.imshow(raw_bgsub, cmap='gray')
+    ax1.set_title('raw_bgsub')
+    
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.set_title(fr'raw_tophat ($\sigma_{{th}}$={tophat_sigma})')
+    
+    tophat_sigma_slider_ax = plt.axes([0.2, 0.02, 0.65, 0.03])
+    tophat_sigma_slider = Slider(tophat_sigma_slider_ax, 'tophat sigma', 2, 2*roi_size, valinit=tophat_sigma, valstep=2)
+    
+    raw_tophat = white_tophat(raw_bgsub, disk(tophat_sigma))
+    raw_tophat_display = ax2.imshow(raw_tophat, cmap='gray')
+    
+    def update_image(tophat_sigma):
+        raw_tophat = white_tophat(raw_bgsub, disk(tophat_sigma))
+        raw_tophat_display.set_data(raw_tophat)
+        ax2.set_title(fr'raw_tophat ($\sigma_{{th}}$={tophat_sigma})')  # Set the title of the right subplot
+        fig.canvas.draw_idle()
+        
+    tophat_sigma_slider.on_changed(lambda val: update_image(val))    
+    plt.show()
+    return raw_tophat, tophat_sigma
+
+def steerable_filter(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle, nX, nY):
     """
     Apply steerable filter to the input image.
 
@@ -198,8 +251,6 @@ def steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steer
         raw (ndarray): The input image.
         raw_mask (ndarray): The mask of the input image.
         raw_roi_mask (ndarray): The region of interest mask.
-        raw_bgsub (ndarray): The background subtracted image.
-        tophat_sigma (float): The sigma value for the top-hat filter.
         steerable_sigma (float): The sigma value for the steerable filter.
         roi_size (int): The size of the region of interest.
         pad_angle (int): The padding angle for cropping.
@@ -217,12 +268,12 @@ def steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steer
     
     nGridX = int(np.floor(nX / roi_size))
     nGridY = int(np.floor(nY / roi_size))
-    selem = disk(tophat_sigma)
-    raw_tophat = white_tophat(raw_bgsub, selem)
     
     raw_rsize = resize(raw, (nGridY, nGridX), order=0) # order=0 --> nearest neighbor interpolation
+
     raw_rsize = raw_rsize.astype(np.float64)
     mask_rsize = resize(raw_mask, (nGridY, nGridX), order=0)
+    
     
     sd = steerable.Detector2D(raw_rsize, 2, steerable_sigma)
     res, _ = sd.filter()
@@ -236,14 +287,16 @@ def steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steer
     for i in range(nGridY):
         for j in range(nGridX):
             if raw_roi_mask[i, j] == 1:
-                Crop = rot[i-(pad_angle-1):i+(pad_angle), j-(pad_angle-1):j+(pad_angle), :]
+                x_idx = [i-(pad_angle-1),i+(pad_angle)]
+                y_idx =  [j-(pad_angle-1),j+(pad_angle)]
+                Crop = rot[x_idx[0]:x_idx[1], y_idx[0]:y_idx[1], :]
                 idxMax = np.full(Crop.shape[2], np.nan)
                 for k in range(Crop.shape[2]):
                     temp = Crop[:, :, k]
                     idxMax[k] = np.nanmean(temp)
                 M, I = np.nanmax(idxMax), np.nanargmax(idxMax)
-                anglemap[i, j] = I+1
-                
+                anglemap[i,j] = I+1
+    #np.savetxt("comparison/anglemap.csv", anglemap, delimiter=",")
     xy_values = np.zeros((nGridY*nGridX, 4))
     t=0
     for i in range(nGridY):
@@ -253,6 +306,7 @@ def steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steer
                 k = 0
                 xi = roi_size*(j+1) + roi_size * np.array([-1, 1]) * np.cos((90-Angle)*-1*np.pi/180) + k*np.cos(Angle*np.pi/180)
                 yi = roi_size*(i+1) + roi_size * np.array([-1, 1]) * np.sin((90-Angle)*-1*np.pi/180) + k*np.sin(Angle*np.pi/180)
+                #embed()
                 # Append xi and yi values to the DataFrame
                 xy_values[t, 0] = xi[0]
                 xy_values[t, 1] = xi[1]
@@ -260,9 +314,9 @@ def steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steer
                 xy_values[t, 3] = yi[1]
                 t+=1
     np.savetxt("res.csv", res, delimiter=",")
-    return raw_tophat, anglemap, res, rot, xy_values
+    return anglemap, res, rot, xy_values
 
-def choose_sigma(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle,qlow, qhigh,nX, nY, sd_0 = None):
+def choose_sigma(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle,qlow, qhigh,nX, nY, sd_0 = None):
     """
     Function to choose the value of sigma for steerable filter.
     
@@ -270,8 +324,6 @@ def choose_sigma(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable
         raw (numpy.ndarray): Raw image data.
         raw_mask (numpy.ndarray): Mask for raw image.
         raw_roi_mask (numpy.ndarray): Mask for region of interest in raw image.
-        raw_bgsub (numpy.ndarray): Background subtracted raw image.
-        tophat_sigma (float): Sigma value for tophat filter.
         steerable_sigma (float): Initial value of sigma for steerable filter.
         roi_size (int): Size of the region of interest.
         pad_angle (float): Angle for padding.
@@ -279,10 +331,10 @@ def choose_sigma(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable
         qhigh (float): The upper limit for the colorbar.
         nX (int): Number of pixels in x-direction.
         nY (int): Number of pixels in y-direction.
-        sd_0 (tuple, optional): Tuple containing initial values of res and xy_values. Defaults to None.
+        sd_0 (tuple, optional): Tuple containing initial values of angelmap,res,rot,xy_values. Defaults to None.
     
     Returns:
-    None
+        None
     """
     fig = plt.figure()
     
@@ -290,24 +342,26 @@ def choose_sigma(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable
     steerable_sigma_slider_ax = plt.axes([0.2, 0.08, 0.65, 0.03])
     steerable_sigma_slider = Slider(steerable_sigma_slider_ax, 'steerable sigma', 1, 4, valinit=steerable_sigma, valstep=0.5)
     if not sd_0:
-        _, _, _, _, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle, nX, nY)
+        anglemap, res, rot, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle, nX, nY)
         res = pd.read_csv('res.csv', header=None).to_numpy()
     else:
-        res = sd_0[0]
-        xy_values = sd_0[1]
-    fig, _, res1_display, res2_display, ax3 = plot_steerable_filter_results(raw, res, xy_values, steerable_sigma,qlow, qhigh, fig)
+        angelmap,res,rot,xy_values = sd_0
+    fig, _, res1_display, res2_display, ax1, ax2, ax3 = plot_steerable_filter_results(raw, res, xy_values, steerable_sigma,qlow, qhigh, fig)
     
     def update_image(steerable_sigma):
-        _, _, _, _, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle,nX, nY)
+        anglemap, res, rot, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle,nX, nY)
         res = pd.read_csv('res.csv', header=None).to_numpy()
         res1_display.set_data(res)   
         raw_new = np.ones((raw.shape[0], raw.shape[1]))
         res2_display.set_data(raw_new)
         ax3.imshow(raw_new, cmap='gray', vmin=np.min(res), vmax=np.max(res))
+        ax1.set_title(f'Raw')
+        ax2.set_title(f'Steerable filter (sigma = {steerable_sigma} pix.)')
         
         # Remove all lines from ax3
         while len(ax3.lines) > 0:
-            ax3.lines.pop(0)
+            line = ax3.lines[0]
+            line.remove()
         for i in range(xy_values.shape[0]):
             ax3.plot([xy_values[i, 0], xy_values[i, 1]], [xy_values[i, 2], xy_values[i, 3]], 'c')
         fig.canvas.draw_idle()
@@ -335,18 +389,14 @@ def plot_steerable_filter_results(raw, res, xy_values, steerable_sigma, qlow, qh
     return_fig = True
     if not fig:
         fig = plt.figure()
-        ax1 = fig.add_subplot(1, 3, 1)
-        plt.title(f'Raw')
-        ax2 = fig.add_subplot(1, 3, 2)
-        plt.title(f'Steerable filter (sigma = {steerable_sigma} pix.)')
-        ax3 = fig.add_subplot(1, 3, 3)
         return_fig = False
-    else:
-        ax1 = fig.add_subplot(1, 3, 1)
-        plt.title(f'Raw')
-        ax2 = fig.add_subplot(1, 3, 2)
-        plt.title(f'Steerable filter')
-        ax3 = fig.add_subplot(1, 3, 3)
+    ax1 = fig.add_subplot(1, 3, 1)
+    ax1.set_title(f'Raw')
+    ax2 = fig.add_subplot(1, 3, 2)
+    ax2.set_title(f'Steerable filter (sigma = {steerable_sigma} pix.)')
+    ax3 = fig.add_subplot(1, 3, 3)
+        
+ 
 
     raw_display = ax1.imshow(raw, cmap='gray', vmin=qlow, vmax=qhigh)
     res1_display = ax2.imshow(res, cmap='gray', vmin=np.min(res), vmax=np.max(res))
@@ -359,7 +409,7 @@ def plot_steerable_filter_results(raw, res, xy_values, steerable_sigma, qlow, qh
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
     
     if return_fig:
-        return fig, raw_display, res1_display, res2_display, ax3
+        return fig, raw_display, res1_display, res2_display, ax1, ax2, ax3
     else:
         plt.show()
         
@@ -411,7 +461,7 @@ def intensity_profile(image, start, end, num_points):
     return intensity
 
 
-def cross_correlation(raw, raw1, raw2, raw_roi_mask, anglemap, gblur_sigma, tophat_sigma, pixSize, nX, nY, roi_size):
+def cross_correlation(raw, raw1, raw2, raw_roi_mask, anglemap, gblur_sigma, pixSize, nX, nY, roi_size, tophat_sigma=None):
     """
     Perform cross-correlation analysis on image data.
 
@@ -434,17 +484,15 @@ def cross_correlation(raw, raw1, raw2, raw_roi_mask, anglemap, gblur_sigma, toph
     
     nGridX = int(np.floor(nX / roi_size))
     nGridY = int(np.floor(nY / roi_size))
+    
     # apply masks
     raw1_BGSub = gaussian_filter(raw1, sigma=gblur_sigma)
-    selem1 = disk(tophat_sigma)
-    raw1_Tophat = white_tophat(raw1_BGSub, selem1)
-    # plot raw1_Tophat
-    #plt.imshow(raw1_Tophat)
-    #plt.show()
-
     raw2_BGSub = gaussian_filter(raw2, sigma=gblur_sigma)
-    selem2 = disk(tophat_sigma)
-    raw2_Tophat = white_tophat(raw2_BGSub, selem2)
+    if tophat_sigma:
+        selem1 = disk(tophat_sigma)
+        raw1_Tophat = white_tophat(raw1_BGSub, selem1)
+        selem2 = disk(tophat_sigma)
+        raw2_Tophat = white_tophat(raw2_BGSub, selem2)
 
     # Define constants and parameters
     corr_length = 4  # [μm]
@@ -575,26 +623,42 @@ def main():
     if chosen_image == fly1_name or chosen_image == fly2_name:
         tmp = '''You chose a image of fly muscle.\n \t- slice 0: alpha-actinin\n\t- slice 1: actin\n\t- slice 2: myosin\n\t- slice 3: sallimus (mask channel)'''
         print(tmp)
-        mask_frame = 3
-        frame1 = 0
-        frame2 = 3
+        slice_index = 0
+        mask_channel = 3
+        substrate1_channel = 0
+        substrate2_channel = 3
+        change_th = True
     if chosen_image == human_name:
         tmp = '''You chose a image of human muscle.\n \t- slice 0: titin N-terminus (mask channel\n\t- slice 1: muscle myosin\n\t- slice 2: nuclei\n\t- slice 3: actin'''
         print(tmp)
-        mask_frame = 1
+        mask_channel = 0
+        change_th = False
+
     path = os.path.join(image_dir, chosen_image)
     
     # load the image
     tif = TiffFile(path)
-    images = np.asarray(tif.asarray())
     
     # choose the frame to use as a mask
-    choose_frame(images)
-    
-    if 'mask_frame' not in locals():
-        mask_frame = input('Enter the number of the mask frame: ')
-    raw = images[mask_frame]
-    raw_info = tif.pages[mask_frame].tags
+    change = True
+    while change:
+        choose_image(tif)
+        if 'slice_index' not in locals():
+            slice_index = int(input('Enter the slice index: '))
+        if 'mask_channel' not in locals():
+            mask_channel = int(input('Enter the index for the mask channel: '))
+        image = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
+        plt.imshow(image, vmin=image.min(), vmax=image.max())
+        plt.title(f'mask image (slice {slice_index}, channel {mask_channel})')
+        plt.show()
+        proceed = input('Proceed? (Y/n)')
+        if proceed == 'n' or proceed == 'N':
+            change = True
+        else:
+            change = False
+        
+    raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
+    raw_info = tif.pages[4*slice_index+mask_channel].tags
     
     nY, nX = raw.shape
     qLow = np.quantile(raw, 0.001)
@@ -621,7 +685,7 @@ def main():
             
             raw, raw_mask, raw_roi_mask, raw_bgsub = mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_angle)
             
-            plot_mask_background(raw_mask, mask_thresh, raw_roi_mask, roi_size, roi_thresh)
+            plot_mask_background(raw_mask, mask_thresh, raw_roi_mask, roi_size, roi_thresh, gblur_sigma)
             proceed = input('Proceed? (Y/n)')
             if proceed == 'n' or proceed == 'N':
                 change = True
@@ -630,12 +694,24 @@ def main():
         else:
             change = False
             raw, raw_mask, raw_roi_mask, raw_bgsub = mask_background(raw, mask_thresh, roi_thresh, roi_size, gblur_sigma, pad_angle)
-    
     change = True
-    while change:
+    while change and change_th:
+        raw_tophat, tophat_sigma = change_tophat_sigma(raw_bgsub, tophat_sigma, roi_size)
         tmp = input(f'Current tophat_sigma: {tophat_sigma}\nChange tophat_sigma? (y/N)')
         if tmp == 'y' or tmp == 'Y':
             tophat_sigma = int(input('Enter new tophat_sigma:'))
+            
+            selem = disk(tophat_sigma)
+            raw_tophat = white_tophat(raw_bgsub, selem)
+            fig = plt.figure()
+            ax1 = fig.add_subplot(1, 2, 1)
+            plt.title(f'raw_bgsub')
+            ax1.imshow(raw_bgsub, cmap='gray')
+            ax2 = fig.add_subplot(1, 2, 2)
+            plt.title(f'raw_tophat (sigma={tophat_sigma})')
+            ax2.imshow(raw_tophat, cmap='gray')
+            plt.show()
+            
             proceed = input('Proceed? (Y/n)')
             if proceed == 'n' or proceed == 'N':
                 change = True
@@ -648,14 +724,14 @@ def main():
 
     while change:
         print(f'Current sigma for steerable filter: {steerable_sigma}\n Aplying steerable filter...')
-        raw_tophat, anglemap, _, rot, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle, nX, nY)
+        anglemap, _, rot, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle, nX, nY)
         res = pd.read_csv('res.csv', header=None).to_numpy()
-        sd_0 = [res, xy_values]
-        choose_sigma(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle,qLow, qHigh, nX, nY, sd_0)
+        sd_0 = [anglemap, res, rot, xy_values]
+        choose_sigma(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle,qLow, qHigh, nX, nY, sd_0)
         tmp = input('Change sigma for steerable filter? (y/N)')
         if tmp == 'y' or tmp == 'Y':
             steerable_sigma = float(input('Enter new sigma for steerable filter:'))
-            raw_tophat, anglemap, _, rot, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, raw_bgsub, tophat_sigma, steerable_sigma, roi_size, pad_angle, nX, nY)
+            anglemap, _, rot, xy_values = steerable_filter(raw, raw_mask, raw_roi_mask, steerable_sigma, roi_size, pad_angle, nX, nY)
             res = pd.read_csv('res.csv', header=None).to_numpy()
             plot_steerable_filter_results(raw, res, xy_values, steerable_sigma,qLow, qHigh)
             proceed = input('Proceed? (Y/n)')
@@ -668,11 +744,18 @@ def main():
     # calculate cross correlation
     print('Calculating the cross correlation:')
     
-    if 'frame1' not in locals():
-        frame1 = int(input('channel number for the first substrate: '))
-        frame2 = int(input('channel number for the second substrate: '))
+    if 'substrate1_channel' not in locals():
+        substrate1_channel = int(input('channel number for the first substrate: '))
+        substrate2_channel = int(input('channel number for the second substrate: '))
+        
     print('calculating cross correlation...')
-    cross_correlation(raw, images[frame1], images[frame2], raw_roi_mask, anglemap, gblur_sigma, tophat_sigma, pixSize, nX, nY, roi_size)
+    image1 = np.asarray(tif.pages[4*slice_index + substrate1_channel].asarray())
+    image2 = np.asarray(tif.pages[4*slice_index + substrate2_channel].asarray())
+    
+    if change_th:
+        cross_correlation(raw, image1, image2, raw_roi_mask, anglemap, gblur_sigma, pixSize, nX, nY, roi_size, tophat_sigma)
+    else:
+        cross_correlation(raw, image1, image2, raw_roi_mask, anglemap, gblur_sigma, pixSize, nX, nY, roi_size)
     
         
         
