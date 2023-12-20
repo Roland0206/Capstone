@@ -1,4 +1,6 @@
 
+clear all
+close all
 xy = readmatrix('/home/roland/Schreibtisch/Capstone/comparison/xy.csv');
 x =xy(:,1);
 y =xy(:,2);
@@ -6,13 +8,15 @@ y =xy(:,2);
 test = xcorr(x,y,'unbiased');
 writematrix(test, '/home/roland/Schreibtisch/Capstone/comparison/xy_xcorr_mat.csv');
 
-clean_border = imread('/home/roland/Schreibtisch/Capstone/comparison/clean_border.png');
+clean_border = readmatrix('/home/roland/Schreibtisch/Capstone/comparison/raw.csv')%imread('/home/roland/Schreibtisch/Capstone/comparison/clean_border.png');
 % Define the line coordinates
-x = [10, 383];
-y = [200, 200];
+x = [200,300];
+y = [400, 600];%[157.9966, 182.3073];
+%y = %[247.2001,109.3270];
 
 % Get the intensity profile along the line
-text = improfile(clean_border, x, y, 400);
+text = improfile(clean_border, x,y, 2*70+1);
+mean(text)
 text = text-mean(text)
 
 % Display the image and the line
