@@ -7,4 +7,5 @@
 **/steerable/matlab/**
 **/comparison/**
 .venv/
-res.csv
+**/*.csv
+

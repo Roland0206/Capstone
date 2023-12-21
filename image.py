@@ -12,13 +12,16 @@ from matplotlib.patches import Polygon
 from IPython import embed
 
 import os
+import time
+from numba import jit
 
 from tifffile import TiffFile
 
 import steerable
 
-from skimage.morphology import disk, white_tophat
 from skimage.transform import resize
+
+import cv2
 
 def white_tophat_trafo(raw, tophat_sigma):
     """
@@ -31,8 +34,11 @@ def white_tophat_trafo(raw, tophat_sigma):
     Returns:
         ndarray: The transformed image.
     """
-    selem = disk(tophat_sigma)
-    return white_tophat(raw, selem)
+    # Create a circular structuring element equivalent to the 'disk' in skimage
+    selem = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(2*tophat_sigma+1), int(2*tophat_sigma+1)))
+    
+    # Apply the white tophat transformation
+    return cv2.morphologyEx(raw, cv2.MORPH_TOPHAT, selem)
                 
 
 def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, fig=None):
@@ -168,7 +174,7 @@ def choose_image(tif, n_channels=4):
     channel_slider.on_changed(update_image_selection)
     plt.show()
 
-def improfile(img, xi, yi, N, order = 1, mode='nearest'):
+def improfile(img, xi, yi, N, order=1, mode='nearest'):
     # Create coordinate arrays
     x = np.linspace(xi[0], xi[1], N)
     y = np.linspace(yi[0], yi[1], N)
@@ -232,7 +238,22 @@ def rectangle_interpolation(point1, point2, point3):
             y4 = m1 * x4 + n3
 
     return ((x1, y1), (x2, y2), (x3, y3), (x4, y4))
+@jit(nopython=True)
+def process_mask(nYCrop, nXCrop, roi_array, raw_mask, mask_thresh):
+    for y in range(nYCrop):
+        for x in range(nXCrop):
+            in_roi = False
+            for roi in roi_array:
+                if inside_rectangle((x, y), roi):
+                    in_roi = True
+                    break
+            if in_roi and raw_mask[y, x] >= mask_thresh:
+                raw_mask[y, x] = 1
+            else:
+                raw_mask[y, x] = 0
+    return raw_mask
 
+@jit(nopython=True)
 def inside_rectangle(point, rect):
     """
     Check if a point is inside a roteted rectangle.
@@ -321,21 +342,21 @@ class ImageAnalysis:
         self.roi_array = []
 
         # Images for mask
-        self.raw = None
-        self.raw_tophat = None
-        self.raw_crop = None
-        self.raw_mask = None
-        self.raw_roi_mask = None
-        self.raw_bgsub = None
+        self.raw = []
+        self.raw_tophat = []
+        self.raw_crop = []
+        self.raw_mask = []
+        self.raw_roi_mask = []
+        self.raw_bgsub = []
         self.pixSize = None
 
         # Steerable filter results
         self.nAngles = 180
         self.steerable_bool = False
-        self.anglemap = None
-        self.res = None
-        self.rot = None
-        self.xy_values_k0 = None
+        self.anglemap = []
+        self.res = []
+        self.rot = []
+        self.xy_values_k0 = []
 
         self.nX = None
         self.nY = None
@@ -343,14 +364,14 @@ class ImageAnalysis:
         self.nYCrop = None
 
         # Images for cross correlation
-        self.raw1 = None
-        self.raw1_tophat = None
-        self.raw2 = None
-        self.raw2_tophat = None
+        self.raw1 = []
+        self.raw1_tophat = []
+        self.raw2 = []
+        self.raw2_tophat = []
 
-        self.ccf_all_valid = None
-        self.mean_ccf = None
-        self.std_mean_ccf = None
+        self.ccf_all_valid = []
+        self.mean_ccf = []
+        self.std_mean_ccf = []
                 
     def set_mask_image(self, raw, pixSize):
         """
@@ -364,7 +385,7 @@ class ImageAnalysis:
         None
         """
         self.raw = raw
-        self.nX, self.nY = self.raw.shape
+        self.nY, self.nX = self.raw.shape
         self.pixSize = pixSize
         
     def set_roi_array(self, roi_array):
@@ -377,7 +398,7 @@ class ImageAnalysis:
         Returns:
         None
         """
-        self.roi_array = roi_array
+        self.roi_array = np.array(roi_array)
         
     def get_cross_correlation(self):
         """
@@ -417,7 +438,7 @@ class ImageAnalysis:
         nGridX = int(np.floor(self.nX / self.roi_size))
 
         # Crop the raw image to fit an integer number of ROIs
-        self.raw_crop = self.raw[:nGridY * self.roi_size, :nGridX * self.roi_size]
+        self.raw_crop = np.copy(self.raw[:nGridY * self.roi_size, :nGridX * self.roi_size])
         self.nYCrop, self.nXCrop = self.raw_crop.shape
 
         # applying a Gaussian blur
@@ -429,10 +450,10 @@ class ImageAnalysis:
         # If there are ROIs defined, create a mask based on whether each pixel is inside an ROI and above a threshold
         n_roi = len(self.roi_array)
         if n_roi > 0:
-            for y in range(self.nYCrop):
-                for x in range(self.nXCrop):
-                    in_roi = any(inside_rectangle((x, y), roi) for roi in self.roi_array)
-                    self.raw_mask[y, x] = int(in_roi and self.raw_mask[y, x] > self.mask_thresh)
+            start = time.time()
+            self.raw_mask = process_mask(self.nYCrop, self.nXCrop, self.roi_array, self.raw_mask, self.mask_thresh)
+            end = time.time()
+            print(f'mask creation took {end - start} seconds')
         else:
             # If no ROIs are defined, create a binary mask based on the threshold
             self.raw_mask = (self.raw_mask >= self.mask_thresh).astype(int)
@@ -440,12 +461,15 @@ class ImageAnalysis:
         # Create a mask of the ROIs based on the percentage of white pixels in each ROI
         self.raw_roi_mask = np.zeros((nGridY, nGridX))
         white_percentage = np.zeros((nGridY, nGridX))
+        start = time.time()
         for i in range(nGridY):
             for j in range(nGridX):
                 temp = self.raw_mask[i*self.roi_size:(i+1)*self.roi_size, j*self.roi_size:(j+1)*self.roi_size].mean()
                 white_percentage[i, j] = temp
                 if temp > self.roi_thresh and self.pad_angle - 1 <= i <= nGridY - self.pad_angle and self.pad_angle - 1 <= j <= nGridX - self.pad_angle:
                     self.raw_roi_mask[i, j] = 1
+        end = time.time()
+        print(f'ROI mask creation took {end - start} seconds')
                         
     def set_tophat_sigma(self, tophat_sigma):
         """
@@ -562,7 +586,7 @@ class ImageAnalysis:
         """
         self.raw2 = raw_substrate2
         
-    def calculate_cross_correlation(self, plot=True):
+    def calculate_cross_correlation(self,tophat=False,  plot=True):
         """
         Calculates the cross-correlation between two images. The cross-correlation is calculated for each ROI and the detected structures in it.
 
@@ -574,14 +598,16 @@ class ImageAnalysis:
         nGridY = int(np.floor(self.nY / self.roi_size))
         
         # check if tophat filter has been applied
-        if self.raw1_tophat:
+        if tophat:
+            self.raw1_tophat = white_tophat_trafo(self.raw1, self.tophat_sigma)
+            self.raw2_tophat = white_tophat_trafo(self.raw2, self.tophat_sigma)
             img1 = self.raw1_tophat
-        else:
-            img1 = self.raw1
-        if self.raw2_tophat:
             img2 = self.raw2_tophat
         else:
+            img1 = self.raw1
             img2 = self.raw2
+        np.savetxt('img1.csv', img1, delimiter=',')
+        np.savetxt('img2.csv', img2, delimiter=',')
         
         # Define constants and parameters
         corr_length = 4  # [μm]
@@ -814,48 +840,39 @@ class ROISelector:
         Args:
             event: The click event.
         """
-        # If less than 3 clicks have been made
-        if self.click_counter < 3:
-            # Get the click position
-            x, y = event.xdata, event.ydata
+        # Get the click position
+        x, y = event.xdata, event.ydata
 
-            # If the click position is within the image
-            if x and y and x >= 0 and x < self.raw.shape[1] and y >= 0 and y <= self.raw.shape[0]:
-                # Store the click position
-                self.click_pos[self.click_counter] = [x, y]
+        # If the click position is within the image
+        if x and y and x >= 0 and x < self.raw.shape[1] and y >= 0 and y <= self.raw.shape[0]:
+            # Store the click position
+            self.click_pos[self.click_counter] = [x, y]
 
-                # If this is the first or second click, plot a point at the click position
-                if self.click_counter in [0, 1]:
-                    self.ax.plot(x, y, 'ro', markersize=2)
-                    if self.click_counter == 1:
-                        # If this is the second click, plot a line from the first click to the second click
-                        self.ax.plot(self.click_pos[0:2, 0], self.click_pos[0:2, 1], 'r-', lw=2)
+            # If this is the first or second click, plot a point at the click position
+            if self.click_counter in [0, 1]:
+                self.ax.plot(x, y, 'ro', markersize=2)
+                if self.click_counter == 1:
+                    # If this is the second click, plot a line from the first click to the second click
+                    self.ax.plot(self.click_pos[0:2, 0], self.click_pos[0:2, 1], 'r-', lw=2)
+                self.click_counter += 1
+            else:
+                # Interpolate a rectangle from the three click positions
+                tmp = rectangle_interpolation(self.click_pos[0], self.click_pos[1], self.click_pos[2])
 
-                # If this is the third click, create a new ROI
-                elif self.click_counter == 2:
-                    # Interpolate a rectangle from the three click positions
-                    tmp = rectangle_interpolation(self.click_pos[0], self.click_pos[1], self.click_pos[2])
+                # Add the new ROI to the list of ROIs
+                self.roi_array.append(tmp)
 
-                    # Add the new ROI to the list of ROIs
-                    self.roi_array.append(tmp)
+                # Plot the new ROI
+                polygon = Polygon(tmp, closed=True, edgecolor='r', fill=False, linewidth=2)
+                self.ax.add_patch(polygon)
+                # Disconnect the click event
+                self.fig.canvas.mpl_disconnect(self.fig.canvas.mpl_connect('button_press_event', self.onclick))
+                # Reset the click counter and click positions
+                self.click_counter = 0
+                self.click_pos = np.zeros((3, 2))
 
-                    # Plot the new ROI
-                    polygon = Polygon(tmp, closed=True, edgecolor='r', fill=False, linewidth=2)
-                    self.ax.add_patch(polygon)
-
-                    # Reset the click counter and click positions
-                    self.click_counter = 0
-                    self.click_pos = np.zeros((3, 2))
-
-                    # Disconnect the click event
-                    self.fig.canvas.mpl_disconnect(self.fig.canvas.mpl_connect('button_press_event', self.onclick))
-
-                # If this is not the third click, increment the click counter
-                else:
-                    self.click_counter += 1
-
-            # Redraw the figure
-            self.fig.canvas.draw()
+        # Redraw the figure
+        self.fig.canvas.draw()
 
     def remove_roi_button_click(self, event):
         """
@@ -870,6 +887,9 @@ class ROISelector:
             patch = self.ax.patches[-1]
             patch.remove()
             self.roi_array = self.roi_array[:-1]
+        while len(self.ax.lines) > 0:
+            line = self.ax.lines[-1]
+            line.remove()
 
         # Redraw the figure
         self.fig.canvas.draw()
@@ -947,6 +967,7 @@ def main():
         plt.imshow(image, vmin=image.min(), vmax=image.max())
         plt.title(f'mask image (slice {slice_index}, channel {mask_channel})')
         plt.show()
+        
         proceed = input('Proceed? (Y/n)')
         if proceed == 'n' or proceed == 'N':
             change = True
@@ -1015,7 +1036,7 @@ def main():
     image2 = np.asarray(tif.pages[4*slice_index + substrate2_channel].asarray())
     image_analysis.set_subtrate1_image(image1)
     image_analysis.set_substrate2_image(image2)
-    image_analysis.calculate_cross_correlation(True)
+    image_analysis.calculate_cross_correlation(tophat=True, plot=True)
     embed()
     
  

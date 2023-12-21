@@ -10,9 +10,9 @@ writematrix(test, '/home/roland/Schreibtisch/Capstone/comparison/xy_xcorr_mat.cs
 
 clean_border = readmatrix('/home/roland/Schreibtisch/Capstone/comparison/raw.csv')%imread('/home/roland/Schreibtisch/Capstone/comparison/clean_border.png');
 % Define the line coordinates
-x = [200,300];
-y = [400, 600];%[157.9966, 182.3073];
-%y = %[247.2001,109.3270];
+x = [157.9966, 182.3073];%[200,300];
+y = [247.2001,109.3270];%[400, 600];%
+%y = %
 
 % Get the intensity profile along the line
 text = improfile(clean_border, x,y, 2*70+1);
