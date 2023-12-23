@@ -46,6 +46,7 @@ public:
     void filter(const double sigma);
     void runNMS();
     void getAngleResponse(double* p, const size_t nt);
+    void getAngleResponseWithArray(double* p, const double* angles, const size_t nAngles);
 
     const double *pixels_;
     size_t nx_, ny_;

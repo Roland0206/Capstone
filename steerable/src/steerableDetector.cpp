@@ -318,6 +318,17 @@ void SteerableDetector::getAngleResponse(double* p, const size_t nt) {
     }
 }
 
+void SteerableDetector::getAngleResponseWithArray(double* p, const double* angles, const size_t nAngles) {
+    div_t divRes;
+    int N = nx_*ny_;
+    for (size_t t=0; t<nAngles; ++t) {
+        for (int i=0; i<N; ++i) {
+            divRes = div(i, nx_);
+            p[t*N + divRes.quot+divRes.rem*ny_] = (this->*pointresp_fct_)(i, angles[t]);
+        }
+    }
+}
+
 
 // Point responses
 double SteerableDetector::pointRespM1(const int i, const double angle) {

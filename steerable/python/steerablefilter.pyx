@@ -15,6 +15,7 @@ cdef extern from "steerableDetector.h" namespace "steerable":
         void filter()
         void runNMS()
         void getAngleResponse(double* p, const size_t nt)
+        void getAngleResponseWithArray(double* p, const double* angles, size_t nAngles)
 
         const double *pixels_
         size_t nx_, ny_
@@ -66,6 +67,12 @@ cdef class Detector2D:
         cdef np.ndarray[np.double_t, ndim=3, mode="c"] fb
         fb = np.zeros([n, self.thisptr.nx_, self.thisptr.ny_])
         self.thisptr.getAngleResponse(&fb[0,0,0], n)
+        return fb
+    def get_angle_response_with_array(self, np.ndarray[double, ndim=1, mode="c"] angles):
+        cdef np.ndarray[double, ndim=3, mode="c"] fb
+        cdef size_t nAngles = len(angles)
+        fb = np.zeros([nAngles, self.thisptr.nx_, self.thisptr.ny_])
+        self.thisptr.getAngleResponseWithArray(&fb[0,0,0], &angles[0], nAngles)
         return fb
     def make_composite(self, response, orientation):
         """RGB composite image of filter response and orientation"""
