@@ -45,7 +45,7 @@ ROI_Pad_Corr = (ROI_Size+(ROI_Size*(Pad_Corr-1))*2);
 %                             IMAGE READ IN 
 % #########################################################################
 input_figures_directory = '/home/roland/Schreibtisch/Capstone/Data/';%'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif'%
-image_filename = '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif';
+image_filename = '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif';
 
 full_path = strcat(input_figures_directory, image_filename);
 

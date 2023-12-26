@@ -572,20 +572,29 @@ class ImageAnalysis:
         self.raw_roi_mask = np.zeros((self.nGridY, self.nGridX))
         white_percentage = np.zeros((self.nGridY, self.nGridX))
         start = time.time()
-        
-        roi_mask_temp = np.zeros((self.nGridY, self.nGridX))
-        roi_mask_array = np.array([np.zeros((self.nGridY, self.nGridX)) for i in range(len(self.roi_array))])
-        for k in range(len(self.roi_array)):
-            raw_mask = self.raw_mask_array[k]
+        if len(self.roi_array) != 0:
+            roi_mask_temp = np.zeros((self.nGridY, self.nGridX))
+            roi_mask_array = np.array([np.zeros((self.nGridY, self.nGridX)) for i in range(len(self.roi_array))])
+            for k in range(len(self.roi_array)):
+                raw_mask = self.raw_mask_array[k]
+                for i in range(self.nGridY):
+                    for j in range(self.nGridX):
+                        temp = raw_mask[i*self.roi_size:(i+1)*self.roi_size, j*self.roi_size:(j+1)*self.roi_size].mean()
+                        white_percentage[i, j] = temp
+                        if temp > self.roi_thresh and self.pad_angle - 1 <= i <= self.nGridY - self.pad_angle and self.pad_angle - 1 <= j <= self.nGridX - self.pad_angle:
+                            roi_mask_array[k][i, j] = 1
+                roi_mask_temp += roi_mask_array[k]
+            self.raw_roi_mask = roi_mask_temp
+            self.raw_roi_mask_array = roi_mask_array
+        else:
             for i in range(self.nGridY):
                 for j in range(self.nGridX):
-                    temp = raw_mask[i*self.roi_size:(i+1)*self.roi_size, j*self.roi_size:(j+1)*self.roi_size].mean()
+                    temp = self.raw_mask[i*self.roi_size:(i+1)*self.roi_size, j*self.roi_size:(j+1)*self.roi_size].mean()
                     white_percentage[i, j] = temp
                     if temp > self.roi_thresh and self.pad_angle - 1 <= i <= self.nGridY - self.pad_angle and self.pad_angle - 1 <= j <= self.nGridX - self.pad_angle:
-                        roi_mask_array[k][i, j] = 1
-            roi_mask_temp += roi_mask_array[k]
-        self.raw_roi_mask = roi_mask_temp
-        self.raw_roi_mask_array = roi_mask_array
+                        self.raw_roi_mask[i, j] = 1
+        
+        
         #plt.imshow(self.raw_roi_mask, cmap='gray')
         #plt.show()
         end = time.time()
