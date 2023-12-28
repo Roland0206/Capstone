@@ -1,25 +1,97 @@
-# Standard library imports
-import os  # Provides functions for interacting with the operating system
-import re  # Provides regular expression matching operations
-import time  # Provides time-related functions
+# Provides functions for interacting with the operating system
+import os  
 
-# Third-party imports
-from collections import Counter  # A dict subclass for counting hashable objects
-import cv2  # OpenCV library for image processing
-from IPython import embed  # Provides an interactive shell
-import matplotlib.pyplot as plt  # Plotting library
-from matplotlib.patches import Polygon  # For creating polygon patches in matplotlib
-from matplotlib.widgets import Slider, Button  # For creating slider and button widgets in matplotlib
-from numba import jit  # Just-In-Time compiler for Python, used for performance optimization
-import numpy as np  # Numerical computing library
-import pandas as pd  # Data analysis and manipulation library
-from scipy.ndimage import gaussian_filter, map_coordinates  # For applying gaussian filter and mapping coordinates
-from skimage.transform import resize  # For resizing images
-from sklearn.cluster import KMeans  # KMeans clustering algorithm
-from spectrum.correlation import xcorr  # Cross-correlation function
-import steerable  # Presumably a library for steerable filters, but it's not a standard Python library
-from tifffile import TiffFile  # For reading and writing TIFF files
-from numba import jit
+# Provides regular expression matching operations
+import re  
+
+# Provides time-related functions
+import time  
+
+# A dict subclass for counting hashable objects
+from collections import Counter  
+
+# OpenCV library for image processing
+import cv2  
+
+# Provides an interactive shell
+from IPython import embed  
+
+# Plotting library
+import matplotlib.pyplot as plt  
+
+# For creating polygon patches in matplotlib
+from matplotlib.patches import Polygon  
+
+# For creating slider and button widgets in matplotlib
+from matplotlib.widgets import Slider, Button  
+
+# Just-In-Time compiler for Python, used for performance optimization
+from numba import jit  
+
+# Numerical computing library
+import numpy as np  
+
+# Data analysis and manipulation library
+import pandas as pd  
+
+# For applying gaussian filter and mapping coordinates
+from scipy.ndimage import gaussian_filter, map_coordinates  
+
+# for fitting curves to data
+from scipy.optimize import curve_fit
+from scipy.fftpack import fft
+
+# For resizing images
+from skimage.transform import resize  
+
+# KMeans clustering algorithm
+from sklearn.cluster import KMeans  
+
+# Cross-correlation function
+from spectrum.correlation import xcorr  
+
+# Presumably a library for steerable filters, but it's not a standard Python library
+import steerable  
+
+# For reading and writing TIFF files
+from tifffile import TiffFile  
+
+def sine_fit(x, y, plot=True):
+    """Estimate parameters of a noisy sine wave by FFT and non-linear fitting."""
+    
+    # Define the sine function
+    def sine_func(x, offs, amp, f, phi):
+        return offs + amp * np.sin(2 * np.pi * f * x + phi)
+    
+    # Estimate frequency using FFT
+    N = len(y)
+    f = np.linspace(0, 1, N)  # Frequency range
+    yf = fft(y)
+    estimate_f = f[np.argmax(np.abs(yf[1:N//2]))]  # Exclude offset
+    
+    # Initial guess for the parameters
+    guess = [np.mean(y), np.std(y), estimate_f, 0]
+    
+    # Perform the fit
+    popt, pcov = curve_fit(sine_func, x, y, p0=guess)
+    
+    # Calculate mean squared error
+    mse = np.mean((y - sine_func(x, *popt)) ** 2)
+    
+    # Append MSE to parameters
+    popt = np.append(popt, mse)
+    
+    # Plot if requested
+    if plot:
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.plot(x, y, 'b-', label='data')
+        x = np.linspace(x[0], x[-1], 1000)
+        plt.plot(x, sine_func(x, *popt[:-1]), 'r-', label='fit')
+        plt.legend()
+        plt.show()
+    
+    return popt
 
 
 def white_tophat_trafo(raw, tophat_sigma):
@@ -489,7 +561,7 @@ class ImageAnalysis:
                 smaller_roi_size: The size of the ROIs for mask creation in the area of interests
         """
         if len(self.roi_instances)==0:
-            pass
+            return
         # check if roi is instance of class ROI
         if not isinstance(self.roi_instances[0], ROI):
             raise TypeError('roi_instances must be a list of ROI objects.')
@@ -610,6 +682,7 @@ class ImageAnalysis:
             path (str, optional): The path to the CSV file. Defaults to 'res.csv'.
         """
         self.res = pd.read_csv(path, header=None).to_numpy()
+ 
         
     def apply_steerable_filter(self, angle_array=None, save=True):
         """
@@ -781,9 +854,7 @@ class ImageAnalysis:
         maxlag = 2 * max_dist  # Correlation length will be doubled because of mirror symmetry
 
         ccf_all = np.full((self.nGridY * self.nGridX, 2 * maxlag + 1), np.nan)  # Allocate memory for ACF/CCF
-        if plot:
-            fig, ax = plt.subplots(figsize=(12, 10))
-            
+        
         # Computation over the whole grid
         for i in range(self.nGridY):
             for j in range(self.nGridX):
@@ -818,28 +889,37 @@ class ImageAnalysis:
 
                     maxlag_plot = len(linescan1) - 1
                     lags = np.arange(-maxlag, maxlag+1) * self.pixSize
-                    ind = np.arange(maxlag_plot, min(2*maxlag_plot+1, len(ccf), len(lags)))
-                    if plot:
-                        ax.plot(lags[ind], ccf[ind], color='#cccaca')
-                        
-                    
+                    ind = np.arange(maxlag_plot, 2*maxlag_plot+1)
 
         # Find the valid CCFs/ACFs and calculate the mean
+        self.cff_all = ccf_all
         self.ccf_all_valid = ccf_all[~np.isnan(ccf_all).any(axis=1)]
         self.mean_ccf = np.mean(self.ccf_all_valid, axis=0)
         self.std_mean_ccf = np.std(self.ccf_all_valid, axis=0, ddof=1)
+        self.lags = lags
+        self.ind = ind
+        self.corr_length = corr_length
         
         if plot:
-            ax.plot(lags[ind], self.mean_ccf[ind], '-', color='#d13111', linewidth=1.8)
-            ax.plot(lags[ind], self.mean_ccf[ind] - self.std_mean_ccf[ind], '--', color='#d13111', linewidth=1.8)
-            ax.plot(lags[ind], self.mean_ccf[ind] + self.std_mean_ccf[ind], '--', color='#d13111', linewidth=1.8)
+            self.plot_cross_correlation()
             
-            ax.set_xlabel(r'$\Delta$ x [$\mu$m]')
-            ax.set_xlim(0,corr_length)
-            ax.set_ylim(-0.5,1)
-            ax.set_ylabel('CCF')
-            plt.savefig('ccf_human.png', dpi=300)
-            plt.show()
+    def plot_cross_correlation(self):
+        fig, ax = plt.subplots(figsize=(12, 10))
+        lags = self.lags[self.ind]
+        for i in range(len(self.cff_all)):
+            ccf = self.cff_all[i, self.ind]
+            ax.plot(lags, ccf, color='#cccaca')
+        ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
+        ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
+        ax.plot(lags, self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
+        
+        ax.set_xlabel(r'$\Delta$ x [$\mu$m]')
+        ax.set_xlim(0,self.corr_length)
+        ax.set_ylim(-0.5,1)
+        ax.set_ylabel('CCF')
+        plt.savefig('ccf_human.png', dpi=300)
+        plt.show()
+        
         
     def select_roi_manually(self):
         """
@@ -851,6 +931,8 @@ class ImageAnalysis:
         """
         tmp = ROISelector(self.raw)
         roi_array = tmp.roi_array
+        if len(roi_array) == 0:
+            return
         roi_instances = np.empty(len(roi_array), dtype=object)
         for i in range(len(roi_array)):
             roi_instances[i] = ROI(roi_array[i], self, i)
@@ -864,9 +946,9 @@ class ImageAnalysis:
         # create ROI instances
         # check if roi_instances is empty
         if len(self.roi_instances) == 0:
-            self.roi_instances = tmp.roi_instances
+            self.roi_instances = roi_instances
         else:
-            self.roi_instances = np.concatenate((self.roi_instances, tmp.roi_instances))
+            self.roi_instances = np.concatenate((self.roi_instances, roi_instances))
         
             
         
@@ -1009,7 +1091,7 @@ def plot_steerable_filter_roi(roi_instances, ax):
     """
     
     if len(roi_instances)==0:
-        pass
+        return
         
     for i in range(len(roi_instances)):
         roi = roi_instances[i]
@@ -1139,9 +1221,6 @@ class ROI(ImageAnalysis):
         else:
             self.pad_angle_array[1, 1] = self.pad_angle
             
-
-            
-
     def set_superclass(self, image_analysis):
         """
         Set the superclass for this instance and perform initial calculations.
@@ -1247,7 +1326,15 @@ class ROI(ImageAnalysis):
         optimal_clusters = distances.index(max(distances)) + 2  # +2 because range starts at 2
         
         # Fit the KMeans algorithm to the data
-        angle_array = find_cluster_anglemap(anglemap, n_clusters=optimal_clusters, nAngles=self.nAngles, roi_mask=self.roi_mask, print=False)
+        
+        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster_anglemap(anglemap, n_clusters=optimal_clusters, roi_mask=self.roi_mask, print_=True)
+        idx = np.argmax(cluster_percentage_arr)
+        mean = cluster_mean_arr[idx]
+        std = cluster_std_arr[idx]
+        min_angle = mean - 2*std
+        max_angle = mean + 2*std
+        angle_array = np.linspace(min_angle, max_angle, self.nAngles, endpoint=True)
+        angle_array = angle_array * np.pi / 180
         
         self.apply_steerable_filter(angle_array)
         plot_steerable_filter_results(self.raw, self.res, self.xy_values_k0, self.steerable_sigma)
@@ -1255,7 +1342,7 @@ class ROI(ImageAnalysis):
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
         
     
-def find_cluster_anglemap(anglemap, n_clusters=2, nAngles=30, roi_mask=None, print=True):
+def find_cluster_anglemap(anglemap, n_clusters=2, roi_mask=None, print_=True):
     """
     Find Clusters in an anglemap, determine the angle range (2*std) of the cluster with the highest percentage of data points and return an array of angles in this range.
     
@@ -1284,6 +1371,7 @@ def find_cluster_anglemap(anglemap, n_clusters=2, nAngles=30, roi_mask=None, pri
 
     # Calculate the total number of data points
     total_data_points = len(data)
+    cluster_data_arr = pd.DataFrame()
     cluster_min_arr = np.zeros(n_clusters)
     cluster_max_arr = np.zeros(n_clusters)
     cluster_mean_arr = np.zeros(n_clusters)
@@ -1294,37 +1382,34 @@ def find_cluster_anglemap(anglemap, n_clusters=2, nAngles=30, roi_mask=None, pri
     # Iterate over the clusters
     for i, cluster in enumerate(cluster_counts):
         # Get the data points in the cluster
-        cluster_data = data[kmeans.labels_ == cluster]
+        # Get the data points in the cluster
+        cluster_data = pd.DataFrame({i: data[kmeans.labels_ == cluster].flatten()})
+        if cluster_data_arr.empty:
+            cluster_data_arr = cluster_data
+        else:
+            cluster_data_arr = pd.concat([cluster_data_arr, cluster_data], axis=1)
         cluster_percentage_arr[i] = (cluster_counts[cluster] / total_data_points) * 100
         # Calculate the mean of the data points in the cluster
-        cluster_mean_arr[i] = np.mean(cluster_data)
+        cluster_mean_arr[i] = np.nanmean(cluster_data)
         
         # Calculate the minimum and maximum of the data points in the cluster
-        cluster_min_arr[i] = np.min(cluster_data)
-        cluster_max_arr[i] = np.max(cluster_data)
+        cluster_min_arr[i] = np.nanmin(cluster_data)
+        cluster_max_arr[i] = np.nanmax(cluster_data)
         
         # calc standard deviation
-        cluster_std_arr[i] = np.std(cluster_data)
+        cluster_std_arr[i] = np.nanstd(cluster_data)
         
         
         # Calculate the difference between the maximum and minimum
         cluster_diff_arr[i] = cluster_max_arr[i] - cluster_min_arr[i]
-        if print:
+        if print_:
             print('Cluster:', cluster)
             print('Mean:', cluster_mean_arr[i])
             print('Min:', cluster_min_arr[i])
             print('Max:', cluster_max_arr[i])
             print('Difference between max and min:', cluster_diff_arr[i])
             print('Percentage:', cluster_percentage_arr[i], '%\n')
-        
-    idx = np.argmax(cluster_percentage_arr)
-    mean = cluster_mean_arr[idx]
-    std = cluster_std_arr[idx]
-    min_angle = mean - 2*std
-    max_angle = mean + 2*std
-    angle_array = np.linspace(min_angle, max_angle, nAngles, endpoint=True)
-    angle_array = angle_array * np.pi / 180
-    return angle_array
+    return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
         
 class ROISelector:
     """
@@ -1585,11 +1670,8 @@ def interactive_image_analysis(image_analysis):
     image_analysis.apply_steerable_filter_roi(int(image_analysis.roi_size/2))
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
     
-    
     # calculate cross correlation
     print('Calculating the cross correlation:')
-    
-    
     image_analysis.calculate_cross_correlation(tophat=True, plot=True)
     #embed()
 

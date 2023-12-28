@@ -14,13 +14,13 @@ function SineParams=sineFit(x,y,varargin)
 %       yOut=offs+amp*sin(2*pi*f*x+phi)
 %
 % Example:
-% % generate y(x)
-% x=-4:5;
-% y=1+2*(sin(2*pi*0.1*x+2)+0.3*randn(size(x)));%Sine + noise
-% [SineP]=sineFit(x,y)
-% figure;
-% xx=x(1):(x(end)-x(1))/222:x(end);%better resolution
-% plot(x,y,xx,SineP(1)+SineP(2)*sin(2*pi*SineP(3)*xx+SineP(4)));
+%generate y(x)
+x=-4:5;
+y=1+2*(sin(2*pi*0.1*x+2)+0.3*randn(size(x)));%Sine + noise
+[SineP]=sineFit(x,y)
+figure;
+xx=x(1):(x(end)-x(1))/222:x(end);%better resolution
+plot(x,y,xx,SineP(1)+SineP(2)*sin(2*pi*SineP(3)*xx+SineP(4)));
 % %uncomment following lines if you want to save y=f(x) and run it sineFitDemo
 % %paramsClean=[1,2,0.1,2];
 % % save('xy.mat','x','y','paramsClean');
