@@ -49,8 +49,8 @@ Raw2 = imread(RawPath,nChannel2,'Info',info); %substrate 2
 Raw2_BGSub = imgaussfilt(Raw2,GBlur_Sigma); % Gaussian blur #2
 Raw2_Tophat=imtophat(Raw2_BGSub,strel('disk',Tophat_Sigma)); %Raw before
 
-Raw1_Tophat = readmatrix("/home/roland/Schreibtisch/Capstone/img1.csv")
-Raw2_Tophat = readmatrix("/home/roland/Schreibtisch/Capstone/img2.csv")
+%Raw1_Tophat = readmatrix("/home/roland/Schreibtisch/Capstone/img1.csv")
+%Raw2_Tophat = readmatrix("/home/roland/Schreibtisch/Capstone/img2.csv")
 %AngleMap = readmatrix('/home/roland/Schreibtisch/Capstone/comparison/AngleMap.csv');
 
 %% correlation length and other pre-defintions of values
@@ -118,7 +118,11 @@ for i=1:nGridY
     maxlag_plot = size( linescan1, 1)-1; 
     lags = (-maxlag:maxlag)*pixSize; % [um] 
     ind = maxlag_plot+1: 2*maxlag_plot+1; % start with 'lag = 0'
-    plot( lags(ind), ccf(ind),'Color','#cccaca')
+    if all(~isnan(ccf(ind)))
+        plot( lags(ind), ccf(ind),'Color','#cccaca')
+        t=5
+    end
+    
     xlabel('\Delta x [um]')
     ylabel('CCF')
     title('CCF (unbiased, normalized)')

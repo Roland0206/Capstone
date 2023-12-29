@@ -40,6 +40,7 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 # for fitting curves to data
 from scipy.optimize import curve_fit
 from scipy.fftpack import fft
+from scipy.signal import argrelextrema
 
 # For resizing images
 from skimage.transform import resize  
@@ -55,13 +56,38 @@ import steerable
 
 # For reading and writing TIFF files
 from tifffile import TiffFile  
+def sine_func(x, offs, amp, f, phi):
+    """
+    sine function
+    
+    Parameter:
+        - x (list): The x-coordinates.
+        - offs (float): The offset of the sine wave.
+        - amp (float): The amplitude of the sine wave.
+        - f (float): The frequency of the sine wave.
+        - phi (float): The phase of the sine wave.
+    
+    Returns:
+        - (list): The y-coordinates of the sine wave.
+    """
+    return offs + amp * np.sin(2 * np.pi * f * x + phi)
 
 def sine_fit(x, y, plot=True):
-    """Estimate parameters of a noisy sine wave by FFT and non-linear fitting."""
+    """
+    Estimate Parameter of a noisy sine wave by FFT and non-linear fitting.
     
-    # Define the sine function
-    def sine_func(x, offs, amp, f, phi):
-        return offs + amp * np.sin(2 * np.pi * f * x + phi)
+    Parameter:
+        - x (list): The x-coordinates of the signal.
+        - y (list): The y-coordinates of the signal.
+        - plot (bool): Whether to plot the signal and the fit.
+    
+    Returns:
+        - popt (list): The estimated Parameter (offset, amplitude, frequency, phase) of the sine wave.
+        - pcov (list): The estimated covariance of the Parameter.
+        - mse (float): The mean squared error of the fit.
+    
+    """
+    
     
     # Estimate frequency using FFT
     N = len(y)
@@ -69,7 +95,7 @@ def sine_fit(x, y, plot=True):
     yf = fft(y)
     estimate_f = f[np.argmax(np.abs(yf[1:N//2]))]  # Exclude offset
     
-    # Initial guess for the parameters
+    # Initial guess for the Parameter
     guess = [np.mean(y), np.std(y), estimate_f, 0]
     
     # Perform the fit
@@ -78,8 +104,6 @@ def sine_fit(x, y, plot=True):
     # Calculate mean squared error
     mse = np.mean((y - sine_func(x, *popt)) ** 2)
     
-    # Append MSE to parameters
-    popt = np.append(popt, mse)
     
     # Plot if requested
     if plot:
@@ -91,19 +115,92 @@ def sine_fit(x, y, plot=True):
         plt.legend()
         plt.show()
     
-    return popt
+    return popt, pcov, mse
+
+def crop_first_two_extrema(x, y, plot=True):
+    """
+    This function crops the signal between the first two extrema.
+    
+    Parameter:
+        - x (list): The x-coordinates of the signal.
+        - y (list): The y-coordinates of the signal.
+        - plot (bool): Whether to plot the signal and the cropped region.
+
+    Returns:
+        - x_crop (list): The x-coordinates of the cropped signal.
+        - y_crop (list): The y-coordinates of the cropped signal.
+        - start (int): The start index of the cropped region.
+        - end (int): The end index of the cropped region.
+    """
+    # find local maxima
+    max_idx = argrelextrema(y, np.greater)
+    # find local minima
+    min_idx = argrelextrema(y, np.less)
+
+    # find first maximum and minimum
+    max_1_idx = max_idx[0][0] if len(max_idx[0]) > 0 else None
+    min_1_idx = min_idx[0][0] if len(min_idx[0]) > 0 else None
+
+
+    # crop signal
+    if max_idx is not None and min_idx is not None:
+        if max_1_idx < min_1_idx:
+            start = max_1_idx
+            end = min_1_idx
+            
+            # find second maximum
+            max_2_idx = max_idx[0][1] if len(max_idx[0]) > 1 else None
+            right_extremum_idx = max_2_idx
+            
+            diff_left = np.abs(y[0]-y[start])
+            if max_2_idx is not None:
+                diff_right = np.abs(y[max_2_idx]-y[end])
+                diff = max(diff_left, diff_right)
+                start = np.argmin(np.abs(y[:start+1] - (y[max_1_idx] - diff / 10)))
+                end = end + np.argmin(np.abs(y[end+1:max_2_idx+1] - (y[min_1_idx] + diff / 10))) + 1
+            else:
+                diff = diff_left
+                start = np.argmin(np.abs(y[:start+1] - (y[max_1_idx] - diff / 10)))
+                end = end + np.argmin(np.abs(y[end+1:] - (y[min_1_idx] + diff / 10))) + 1
+        else:
+            start = min_1_idx
+            end = max_1_idx
+            
+            # find second minimum
+            min_2_idx = min_idx[0][1] if len(min_idx[0]) > 1 else None
+            right_extremum_idx = min_2_idx
+        
+            diff_left = np.abs(y[0]-y[start])
+            if min_2_idx is not None:
+                diff_right = np.abs(y[min_2_idx]-y[end])
+                diff = max(diff_left, diff_right)
+                start = np.argmin(np.abs(y[:start+1] - (y[min_1_idx] + diff / 10)))
+                end = end + np.argmin(np.abs(y[end+1:min_2_idx+1] - (y[max_1_idx] - diff / 10))) + 1
+            else:
+                diff = diff_left
+                start = np.argmin(np.abs(y[:start+1] - (y[min_1_idx] + diff / 10)))
+                end = end + np.argmin(np.abs(y[end+1:] - (y[max_1_idx] - diff / 10))) + 1
+
+        y_crop = y[start:end+1]
+        x_crop = x[start:end+1]
+        if plot:
+            fig, ax = plt.subplots()
+            ax.plot(x, y, ls='o', color='b', label='data')
+            plt.vlines(x[start], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
+            plt.vlines(x[end], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
+        return x_crop, y_crop, start, end
 
 
 def white_tophat_trafo(raw, tophat_sigma):
     """
     Applies a white tophat transformation to an image (remove objects smaller than the structuring element)
 
-    Args:
-        raw (ndarray): The raw input image.
-        tophat_sigma (float): defines the size of the structuring element (disk with diameter 2*tophat_sigma+1).
+    Parameter:
+        - raw (ndarray): The raw input image.
+        - tophat_sigma (float): defines the size of the structuring element (disk with diameter 2*tophat_sigma+1).
 
     Returns:
-        ndarray: The transformed image.
+        - ndarray: The transformed image.
     """
     # Create a circular structuring element equivalent to the 'disk' in skimage
     selem = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(2*tophat_sigma+1), int(2*tophat_sigma+1)))
@@ -116,17 +213,17 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     """
     Plots the results of a steerable filter analysis.
 
-    Args:
-        raw (ndarray): The raw input image.
-        res (ndarray): The response of the steerable filter.
-        xy_values_k0 (ndarray): Array of xy coordinate values of structures detected by the steerable filter.
-        steerable_sigma (float): The sigma value used when the steerable filter was applied.
-        roi_instances (list, optional): A list of obejects of class ROI. Defaults to [].
-        fig (Figure, optional): The figure object to plot on. If not provided, a new figure will be created.
+    Parameter:
+        - raw (ndarray): The raw input image.
+        - res (ndarray): The response of the steerable filter.
+        - xy_values_k0 (ndarray): Array of xy coordinate values of structures detected by the steerable filter.
+        - steerable_sigma (float): The sigma value used when the steerable filter was applied.
+        - roi_instances (list, optional): A list of obejects of class ROI. Defaults to [].
+        - fig (Figure, optional): The figure object to plot on. If not provided, a new figure will be created.
 
     Returns:
-        tuple: A tuple containing the figure object, raw image display, filtered image display, 
-               new raw image display, and the axis object for the xy plot.
+        - tuple: A tuple containing the figure object, raw image display, filtered image display, 
+                 new raw image display, and the axis object for the xy plot.
     """
     res = pd.read_csv('res.csv', header=None).to_numpy()
     # limits of colorbar
@@ -165,18 +262,18 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
     """
     Plots the mask and ROIMask images.
 
-    Parameters:
-        raw_mask (numpy.ndarray): The raw mask image.
-        raw_roi_mask (numpy.ndarray): The raw ROIMask image.
-        mask_thresh (float): The threshold value used to create the binary mask.
-        roi_size (int): The size of the ROI.
-        roi_thresh (float): The threshold value used when creating the ROIMask image.
-        gblur_sigma (float): The sigma value used when applying a Gaussian blur to the image.
-        roi_instances (list, optional): A list of obejects of class ROI. Defaults to [].
-        fig (matplotlib.figure.Figure, optional): The figure object to plot the images on. If not provided, a new figure will be created.
+    Parameter:
+        - raw_mask (numpy.ndarray): The raw mask image.
+        - raw_roi_mask (numpy.ndarray): The raw ROIMask image.
+        - mask_thresh (float): The threshold value used to create the binary mask.
+        - roi_size (int): The size of the ROI.
+        - roi_thresh (float): The threshold value used when creating the ROIMask image.
+        - gblur_sigma (float): The sigma value used when applying a Gaussian blur to the image.
+        - roi_instances (list, optional): A list of obejects of class ROI. Defaults to [].
+        - fig (matplotlib.figure.Figure, optional): The figure object to plot the images on. If not provided, a new figure will be created.
 
     Returns:
-        tuple: A tuple containing the two image objects (pic1, pic2) if fig is provided, otherwise None.
+        - tuple: A tuple containing the two image objects (pic1, pic2) if fig is provided, otherwise None.
     """
     return_fig = True
     if not fig:
@@ -215,12 +312,12 @@ def choose_image(tif, n_channels=4):
     """
     Displays an interactive window to choose a frame from a sequence of images.
 
-    Parameters:
-    tif (tifffile.TiffFile): The TIFF file containing the image sequence.
-    n_channels (int) : The number of channels in the image.
+    Parameter:
+        - tif (tifffile.TiffFile): The TIFF file containing the image sequence.
+        - n_channels (int) : The number of channels in the image.
 
     Returns:
-    None
+        - None
     """
     # Get the number of slices
     n = len(tif.pages)
@@ -266,12 +363,12 @@ def improfile(img, xi, yi, N, order=1, mode='nearest'):
     Calculate the intensity profile along a line in an image.
     
     Parameter:
-        img (numpy.ndarray): The image data.
-        xi (tuple): The x-coordinates defining the line.
-        yi (tuple): The y-coordinates defining the line.
-        N (int): The number of points to interpolate along the line.
-        order (int, optional): The order of the spline interpolation. Defaults to 1.
-        mode (str, optional): The mode parameter passed to map_coordinates. Defaults to 'nearest' (nearest-neighbor interpolation)
+        - img (numpy.ndarray): The image data.
+        - xi (tuple): The x-coordinates defining the line.
+        - yi (tuple): The y-coordinates defining the line.
+        - N (int): The number of points to interpolate along the line.
+        - order (int, optional): The order of the spline interpolation. Defaults to 1.
+        - mode (str, optional): The mode parameter passed to map_coordinates. Defaults to 'nearest' (nearest-neighbor interpolation)
     
     """
     # Create coordinate arrays
@@ -289,10 +386,10 @@ def rectangle_interpolation(point1, point2, point3):
     """
     Create a rectangle from three points.
 
-    Args:
-        point1 (tuple) (x1,y1)         : The first corner of the rectangle.
-        point2 (tuple) (x2,y2)         : The second corner of the rectangle .
-        point3 (tuple) (x_proj, y_proj): The third point defining the rectangle (only the projection matters).
+    Parameter:
+        - point1 (tuple) (x1,y1)         : The first corner of the rectangle.
+        - point2 (tuple) (x2,y2)         : The second corner of the rectangle .
+        - point3 (tuple) (x_proj, y_proj): The third point defining the rectangle (only the projection matters).
         
                               (x1, y1)               
                       
@@ -319,7 +416,7 @@ def rectangle_interpolation(point1, point2, point3):
             
 
     Returns:
-        tuple: A tuple containing the four corner points of the rectangle.
+        - tuple: A tuple containing the four corner points of the rectangle.
     """
     x1, y1 = point1
     x2, y2 = point2
@@ -361,10 +458,10 @@ def process_mask(roi, raw_mask, mask_thresh):
     """
     Create a binary mask based on a threshold and a ROI.
     
-    Parameters:
-        roi (tuple) (x1,y1,x2,y2,x3,y3,x4,y4): The four corner points of the rectangle defining the ROI.
-        raw_mask (numpy.ndarray): The empty raw mask image to save the created mask .
-        mask_thresh (float): The threshold value used to create the binary mask.
+    Parameter:
+        - roi (tuple) (x1,y1,x2,y2,x3,y3,x4,y4): The four corner points of the rectangle defining the ROI.
+        - raw_mask (numpy.ndarray): The empty raw mask image to save the created mask .
+        - mask_thresh (float): The threshold value used to create the binary mask.
     """
     nY, nX = raw_mask.shape
     for y in range(nY):
@@ -385,12 +482,12 @@ def inside_rectangle(point, rect):
     """
     Check if a point is inside a roteted rectangle.
 
-    Args:
-        point (tuple) (x,y): The point to check.
-        rect (tuple) (x1,y1,x2,y2,x3,y3,x4,y4): The four corner points of the rectangle.
+    Parameter:
+        - point (tuple) (x,y): The point to check.
+        - rect (tuple) (x1,y1,x2,y2,x3,y3,x4,y4): The four corner points of the rectangle.
 
     Returns:
-        bool: True if the point is inside the rectangle, False otherwise.
+        - bool: True if the point is inside the rectangle, False otherwise.
     """
     x, y = point
     (x1, y1), (x2, y2), (x3, y3), (x4, y4) = rect
@@ -416,7 +513,7 @@ class ImageAnalysis:
     Class for performing image analysis on a given image.
 
     Attributes:
-        Parameters:
+        Parameter:
             - gblur_sigma: The sigma value for Gaussian blurring.
             - roi_size: The size of the region of interest (ROI).
             - tophat_sigma: The sigma value for the top-hat filter.
@@ -449,7 +546,7 @@ class ImageAnalysis:
             - mean_ccf: The mean cross-correlation.
             - std_mean_ccf: The standard deviation of the mean cross-correlation function.
             
-        Parameters for detecting the nematic ordered structures on mask and results:
+        Parameter for detecting the nematic ordered structures on mask and results:
             - steerable_bool: A boolean value indicating whether the steerable filter has been applied.
             - anglemap: The angle map.
             - res: The response of the steerable filter to the masked image
@@ -460,7 +557,7 @@ class ImageAnalysis:
     """
 
     def __init__(self, config={}):
-        # general parameters
+        # general Parameter
         self.gblur_sigma = config.get('gblur_sigma', 2)
         self.roi_size = config.get('roi_size', 30)
         self.tophat_sigma = config.get('tophat_sigma', 28)
@@ -511,12 +608,12 @@ class ImageAnalysis:
         """
         Set the mask image.
 
-        Parameters:
-            raw (numpy.ndarray): The raw image data.
-            pixSize (float): The pixel size in micrometers.
+        Parameter:
+            - raw (numpy.ndarray): The raw image data.
+            - pixSize (float): The pixel size in micrometers.
 
         Returns:
-            None
+            - None
         """
         self.raw = raw
         self.nY, self.nX = self.raw.shape
@@ -526,11 +623,11 @@ class ImageAnalysis:
         """
         Set the ROI (Region of Interest) array.
 
-        Parameters:
-            roi_array: The ROI array to be set.
+        Parameter:
+            - roi_array: The ROI array to be set.
 
         Returns:
-            None
+            - None
         """
         self.roi_array = np.array(roi_array)
         
@@ -539,26 +636,26 @@ class ImageAnalysis:
         Calculate the cross-correlation of the image.
 
         Returns:
-            ccf_all_valid (numpy.ndarray): The cross-correlation values for all valid pixels.
-            mean_ccf (float): The mean cross-correlation value.
-            std_mean_ccf (float): The standard deviation of the mean cross-correlation value.
+            - ccf_all_valid (numpy.ndarray): The cross-correlation values for all valid pixels.
+            - mean_ccf (float): The mean cross-correlation value.
+            - std_mean_ccf (float): The standard deviation of the mean cross-correlation value.
         """
         return self.ccf_all_valid, self.mean_ccf, self.std_mean_ccf
         
-    def get_mask_parameters(self):
+    def get_mask_Parameter(self):
         """
-        Returns the mask parameters used for image processing.
+        Returns the mask Parameter used for image processing.
 
         Returns:
-            tuple: A tuple containing the mask threshold, ROI size, ROI threshold, and Gaussian blur sigma.
+            - tuple: A tuple containing the mask threshold, ROI size, ROI threshold, and Gaussian blur sigma.
         """
         return self.mask_thresh, self.roi_size, self.roi_thresh, self.gblur_sigma
     
     def apply_steerable_filter_roi(self, smaller_roi_size):
         """
         apply the steerable filter to each ROI (region of interest in self.raw) in self.roi_instances with a smaller ROI size (ROIs for mask creation)
-            Parameters:
-                smaller_roi_size: The size of the ROIs for mask creation in the area of interests
+        Parameter:
+            - smaller_roi_size: The size of the ROIs for mask creation in the area of interests
         """
         if len(self.roi_instances)==0:
             return
@@ -574,7 +671,7 @@ class ImageAnalysis:
             
             # reduce the size of the ROI to the smaller_roi_size
             self.roi_instances[i].set_roi_size(smaller_roi_size)
-            #TODO: maybe also change other parameters for mask creation?
+            #TODO: maybe also change other Parameter for mask creation?
             
             # apply the steerable filter to the ROI (to the cropped images of the superclass)
             self.roi_instances[i].apply_steerable_filter_finetuning(10, 10)
@@ -585,13 +682,13 @@ class ImageAnalysis:
         and creating a region of interest (ROI) mask based on the percentage of white pixels in each ROI of size self.roi_size x self.roi_size.
 
         The method updates the following instance variables:
-        - raw_crop: Cropped version of the raw image
-        - nYCrop, nXCrop: Dimensions of the cropped image
-        - raw_bgsub: cropped image with gaussian blur applied
-        - raw_mask: Binary mask of raw_bgsub
-        - raw_roi_mask: Binary mask of the ROIs of the whole image
-        - raw_mask_array: Array of binary masks for each ROI
-        - raw_roi_mask_array: Array of binary masks for each ROI
+            - raw_crop: Cropped version of the raw image
+            - nYCrop, nXCrop: Dimensions of the cropped image
+            - raw_bgsub: cropped image with gaussian blur applied
+            - raw_mask: Binary mask of raw_bgsub
+            - raw_roi_mask: Binary mask of the ROIs of the whole image
+            - raw_mask_array: Array of binary masks for each ROI
+            - raw_roi_mask_array: Array of binary masks for each ROI
         """
 
         # Calculate the number of ROIs in the y and x directions
@@ -678,8 +775,8 @@ class ImageAnalysis:
         """
         Load the response of the steerable filter from a CSV file. Neccessarry because of weird bug (res entries somehow get changed to zero even if the array is not explicitly changed)
 
-        Args:
-            path (str, optional): The path to the CSV file. Defaults to 'res.csv'.
+        Parameter:
+            - path (str, optional): The path to the CSV file. Defaults to 'res.csv'.
         """
         self.res = pd.read_csv(path, header=None).to_numpy()
  
@@ -689,10 +786,10 @@ class ImageAnalysis:
         This method applies a steerable filter to the image, calculates the angle response, and creates an angle map.
         It also calculates the start xi and endposition yi of each detected structure based on the angle map.
         
-        Parameters:
-            angle_array: Array of angles for the steerable filter. If None, the self.nAngles parameter is used to apply the steerable filter
+        Parameter:
+            - angle_array: Array of angles for the steerable filter. If None, the self.nAngles parameter is used to apply the steerable filter
             at 180/self.nAngles degree steps.
-            save: If True, the response of the steerable filter is saved to a CSV file.
+            - save: If True, the response of the steerable filter is saved to a CSV file.
 
         The method updates the following instance variables:
             - res: filter response
@@ -805,11 +902,11 @@ class ImageAnalysis:
         """
         Set the image for substrate 1.
 
-        Args:
-            raw_substrate1: The raw image data for substrate 1.
+        Parameter:
+            - raw_substrate1: The raw image data for substrate 1.
 
         Returns:
-            None
+            - None
         """
         self.raw1 = raw_substrate1
         
@@ -817,11 +914,11 @@ class ImageAnalysis:
         """
         Set the raw substrate 2 image.
 
-        Args:
-            raw_substrate2: The raw substrate 2 image.
+        Parameter:
+            - raw_substrate2: The raw substrate 2 image.
 
         Returns:
-            None
+            - None
         """
         self.raw2 = raw_substrate2
         
@@ -831,8 +928,8 @@ class ImageAnalysis:
 
         TODO: Calculate cross-correlation in each ROI in self.roi_instances
         Parameter:
-            tophat: If True, the tophat filter is applied to the substrate images before calculating the cross-correlation.
-            plot: If True, the cross-correlation is plotted.
+            - tophat: If True, the tophat filter is applied to the substrate images before calculating the cross-correlation.
+            - plot: If True, the cross-correlation is plotted.
         """
         
         # check if tophat filter has been applied
@@ -847,7 +944,7 @@ class ImageAnalysis:
         #np.savetxt('img1.csv', img1, delimiter=',')
         #np.savetxt('img2.csv', img2, delimiter=',')
         
-        # Define constants and parameters TODO: maybe make them attributes of the class
+        # Define constants and Parameter TODO: maybe make them attributes of the class
         corr_length = 4  # [μm]
         crop_length = round(corr_length / (2 * self.pixSize))  # [pixel]
         max_dist = round(crop_length) + 10  # +10 pixels to corr_length to smaller deviations
@@ -906,8 +1003,13 @@ class ImageAnalysis:
     def plot_cross_correlation(self):
         fig, ax = plt.subplots(figsize=(12, 10))
         lags = self.lags[self.ind]
+        df = pd.DataFrame()
+        df['lags'] = self.lags[self.ind]
+
+
         for i in range(len(self.cff_all)):
             ccf = self.cff_all[i, self.ind]
+            df[f'ccf_{i}'] = ccf
             ax.plot(lags, ccf, color='#cccaca')
         ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
         ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
@@ -917,8 +1019,28 @@ class ImageAnalysis:
         ax.set_xlim(0,self.corr_length)
         ax.set_ylim(-0.5,1)
         ax.set_ylabel('CCF')
+        
+        # Add mean_ccf, mean_ccf - std_mean_ccf, and mean_ccf + std_mean_ccf to the DataFrame
+        df['mean_ccf'] = self.mean_ccf[self.ind]
+        df['mean_ccf_minus_std'] = self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind]
+        df['mean_ccf_plus_std'] = self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind]
+
+        # Save the DataFrame to a CSV file
+        df.to_csv('comparison/ccf_Parameter.csv', index=False)
         plt.savefig('ccf_human.png', dpi=300)
         plt.show()
+    
+    def calc_fourier_peak_one_ccf(self, i):
+        ccf = self.ccf_all_valid[i, self.ind]
+        lags = self.lags[self.ind]
+        
+        # crop ccf around the first minima and maxima
+        lags_crop, ccf_crop, start_idx, end_idx = crop_first_two_extrema(lags, ccf)
+        
+        # fit sine function to the cropped ccf
+        popt, pcov, mse = sine_fit(lags_crop, ccf_crop)
+        
+        
         
         
     def select_roi_manually(self):
@@ -950,12 +1072,10 @@ class ImageAnalysis:
         else:
             self.roi_instances = np.concatenate((self.roi_instances, roi_instances))
         
-            
-        
         
     def get_parameter_dict(self):
         """
-        Retuen a dictionary containing the parameters of the ImageAnalysis instance.
+        Return a dictionary containing the Parameter of the ImageAnalysis instance.
         """
         return vars(self)
         
@@ -1082,12 +1202,12 @@ def plot_steerable_filter_roi(roi_instances, ax):
     """
     Plot the ROIs in the image self.raw.
     
-    Parameters:
-        roi_instances: The ROI instances to be plotted.
-        ax: The axes object to plot the ROIs on.
+    Parameter:
+        - roi_instances: The ROI instances to be plotted.
+        - ax: The axes object to plot the ROIs on.
     
     Returns:
-        ax: The axes object with the ROIs plotted on it.
+        - ax: The axes object with the ROIs plotted on it.
     """
     
     if len(roi_instances)==0:
@@ -1155,7 +1275,7 @@ class ROI(ImageAnalysis):
                             
                             <----------------------------------------------------------->
                                             n_roi_x * image_analysis.roi_size
-        Further Parameters:
+        Further Parameter:
             - dx: The width of the ROI.
         """
         
@@ -1276,19 +1396,16 @@ class ROI(ImageAnalysis):
         self.raw_crop = np.copy(self.raw[:self.nGridY * self.roi_size, :self.nGridX * self.roi_size])
         self.nYCrop, self.nXCrop = self.raw_crop.shape
 
-
-    
-                
     def apply_steerable_filter_finetuning(self):
         """
         This method applies a steerable filter to the image self.raw. It calculates the response of the filter, the response of the input image to rotated versions of the filter, and the angle map.
         
         The method updates the following instance variables:
-        - res: filter response
-        - rot: response of the input image to rotated versions of the filter, at 'nAngles' different angles
-        - anglemap: Map of the angles of the maximum response for each ROI
-        - xy_values_k0: start xi and endposition yi of each detected stucture( xy_values_k0[t, 0] = xi, xy_values_k0[t, 1] = yi)
-        - steerable_bool: Flag indicating that the steerable filter has been applied
+            - res: filter response
+            - rot: response of the input image to rotated versions of the filter, at 'nAngles' different angles
+            - anglemap: Map of the angles of the maximum response for each ROI
+            - xy_values_k0: start xi and endposition yi of each detected stucture( xy_values_k0[t, 0] = xi, xy_values_k0[t, 1] = yi)
+            - steerable_bool: Flag indicating that the steerable filter has been applied
         """
         roi_mask_superclass = self.image_analysis.raw_roi_mask_array[self.i].copy()
         anglemap = self.image_analysis.anglemap.copy()
@@ -1346,12 +1463,12 @@ def find_cluster_anglemap(anglemap, n_clusters=2, roi_mask=None, print_=True):
     """
     Find Clusters in an anglemap, determine the angle range (2*std) of the cluster with the highest percentage of data points and return an array of angles in this range.
     
-    Parameters:
+    Parameter:
         - anglemap (2darray): The array to find clusters in.
         - n_clusters (int): The number of clusters to find.
         - nAngles (int): The number of angles in the angle array.
         - roi_mask (2darray): The ROI mask.
-        - print (boolean): If True, print the parameters of each cluster.
+        - print (boolean): If True, print the Parameter of each cluster.
     Returns:
         - angle_array (1darray): An array of angles in the range of the cluster with the highest percentage of data points. The angles are in radians.
     """
@@ -1421,8 +1538,8 @@ class ROISelector:
         """
         Initialize the ROISelector with an image.
 
-        Args:
-            raw: The image to select ROIs from.
+        Parameter:
+            - raw: The image to select ROIs from.
         """
         # Create a figure and axes for the image
         self.fig, self.ax = plt.subplots()
@@ -1457,8 +1574,8 @@ class ROISelector:
         """
         Handle a click event.
 
-        Args:
-            event: The click event.
+        Parameter:
+            - event: The click event.
         """
         # Get the click position
         x, y = event.xdata, event.ydata
@@ -1498,8 +1615,8 @@ class ROISelector:
         """
         Handle a click event on the "Remove last ROI" button.
 
-        Args:
-            event: The click event.
+        Parameter:
+            - event: The click event.
         """
         # If there are any ROIs
         if self.ax.patches:
@@ -1518,8 +1635,8 @@ class ROISelector:
         """
         Handle a click event on the "Add ROI" button.
 
-        Args:
-            event: The click event.
+        Parameter:
+            - event: The click event.
         """
         # Connect the click event to the onclick method
         self.fig.canvas.mpl_connect('button_press_event', self.onclick)
@@ -1635,14 +1752,14 @@ def interactive_image_analysis(image_analysis):
         tmp =f'''Current parameter for creation of mask and background substraction:\n\t- mask_thresh: {image_analysis.mask_thresh}\n\t- roi_thresh: {image_analysis.roi_thresh}\n\t- roi_size: {image_analysis.roi_size}\n\t- gblur_sigma: {image_analysis.gblur_sigma}'''
         print(tmp)
         
-        param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_parameters(), image_analysis.roi_instances]
+        param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances]
         plot_mask_background(*param)
         
         change = input('\n Change parameter? (y/N)')
 
         if change == 'y' or change == 'Y':
             image_analysis.choose_parameter_mask()
-            proceed = input(f'New Parameters:\n\t- mask_thresh: {image_analysis.mask_thresh}\n\t- roi_thresh: {image_analysis.roi_thresh}\n\t- roi_size: {image_analysis.roi_size}\n\t- gblur_sigma: {image_analysis.gblur_sigma}\nProceed? (Y/n)')
+            proceed = input(f'New Parameter:\n\t- mask_thresh: {image_analysis.mask_thresh}\n\t- roi_thresh: {image_analysis.roi_thresh}\n\t- roi_size: {image_analysis.roi_size}\n\t- gblur_sigma: {image_analysis.gblur_sigma}\nProceed? (Y/n)')
             if proceed == 'n' or proceed == 'N':
                 change = True
             else:
