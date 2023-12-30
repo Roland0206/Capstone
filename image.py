@@ -674,7 +674,7 @@ class ImageAnalysis:
             #TODO: maybe also change other Parameter for mask creation?
             
             # apply the steerable filter to the ROI (to the cropped images of the superclass)
-            self.roi_instances[i].apply_steerable_filter_finetuning(10, 10)
+            self.roi_instances[i].apply_steerable_filter_finetuning()
     
     def mask_background(self):
         """
@@ -1003,13 +1003,13 @@ class ImageAnalysis:
     def plot_cross_correlation(self):
         fig, ax = plt.subplots(figsize=(12, 10))
         lags = self.lags[self.ind]
-        df = pd.DataFrame()
-        df['lags'] = self.lags[self.ind]
+        #df = pd.DataFrame()
+        #df['lags'] = self.lags[self.ind]
 
 
         for i in range(len(self.cff_all)):
             ccf = self.cff_all[i, self.ind]
-            df[f'ccf_{i}'] = ccf
+            #df[f'ccf_{i}'] = ccf
             ax.plot(lags, ccf, color='#cccaca')
         ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
         ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
@@ -1021,12 +1021,12 @@ class ImageAnalysis:
         ax.set_ylabel('CCF')
         
         # Add mean_ccf, mean_ccf - std_mean_ccf, and mean_ccf + std_mean_ccf to the DataFrame
-        df['mean_ccf'] = self.mean_ccf[self.ind]
-        df['mean_ccf_minus_std'] = self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind]
-        df['mean_ccf_plus_std'] = self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind]
+        #df['mean_ccf'] = self.mean_ccf[self.ind]
+        #df['mean_ccf_minus_std'] = self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind]
+        #df['mean_ccf_plus_std'] = self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind]
 
         # Save the DataFrame to a CSV file
-        df.to_csv('comparison/ccf_Parameter.csv', index=False)
+        #df.to_csv('comparison/ccf_Parameter.csv', index=False)
         plt.savefig('ccf_human.png', dpi=300)
         plt.show()
     
@@ -1444,7 +1444,7 @@ class ROI(ImageAnalysis):
         
         # Fit the KMeans algorithm to the data
         
-        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster_anglemap(anglemap, n_clusters=optimal_clusters, roi_mask=self.roi_mask, print_=True)
+        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster_anglemap(anglemap, n_clusters=optimal_clusters, print_=True)
         idx = np.argmax(cluster_percentage_arr)
         mean = cluster_mean_arr[idx]
         std = cluster_std_arr[idx]
@@ -1459,7 +1459,7 @@ class ROI(ImageAnalysis):
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
         
     
-def find_cluster_anglemap(anglemap, n_clusters=2, roi_mask=None, print_=True):
+def find_cluster_anglemap(anglemap, n_clusters=2, print_=True):
     """
     Find Clusters in an anglemap, determine the angle range (2*std) of the cluster with the highest percentage of data points and return an array of angles in this range.
     
@@ -1467,13 +1467,10 @@ def find_cluster_anglemap(anglemap, n_clusters=2, roi_mask=None, print_=True):
         - anglemap (2darray): The array to find clusters in.
         - n_clusters (int): The number of clusters to find.
         - nAngles (int): The number of angles in the angle array.
-        - roi_mask (2darray): The ROI mask.
         - print (boolean): If True, print the Parameter of each cluster.
     Returns:
         - angle_array (1darray): An array of angles in the range of the cluster with the highest percentage of data points. The angles are in radians.
     """
-    if roi_mask is not None:
-        anglemap[roi_mask == 0] = 0
     # Get only non-zero angles
     anglemap_nonzero = anglemap[anglemap!=0]
     

@@ -5,7 +5,6 @@
 **/steerable/python/*.so
 **/steerable/python/*.cpp
 **/steerable/matlab/**
-**/comparison/**
 .venv/
 **/*.csv
 
