@@ -20,7 +20,7 @@ from IPython import embed
 import matplotlib.pyplot as plt  
 
 # For creating polygon patches in matplotlib
-from matplotlib.patches import Polygon  
+from matplotlib.patches import Polygon, Rectangle
 
 # For creating slider and button widgets in matplotlib
 from matplotlib.widgets import Slider, Button  
@@ -122,7 +122,47 @@ def sine_fit(x, y, plot=False, tol=0.00025):
     
     return popt, pcov, mse
 
-def crop_first_two_extrema(x, y,factor=1/10, plot=False):
+def calculate_diff(y, idx1, idx2, idx3, idx4, factor):
+    
+    # find central two extrema
+    extrem_2 = y[idx2]
+    extrem_3 = y[idx3]
+    diff_max = np.abs(extrem_2-extrem_3)
+    
+    # exclude datapoints
+    y_tmp = y.copy()
+    if extrem_2 > extrem_3:
+        y_tmp[y_tmp > extrem_2] = np.nan
+        y_tmp[y_tmp < extrem_3] = np.nan
+    else:
+        y_tmp[y_tmp > extrem_3] = np.nan
+        y_tmp[y_tmp < extrem_2] = np.nan
+    
+    # find closest nan to the left of idx2
+    try:
+        idx1 = np.argwhere(np.isnan(y_tmp[:idx2]))[-1][0] + 1
+    except IndexError:
+        idx1 += 0 
+           
+    # find closest nan to the right of idx3 until idx4
+    try:
+        idx4 = np.argwhere(np.isnan(y_tmp[idx3:idx4]))[0][0] + idx3 - 1
+    except IndexError:
+        idx4 += 0
+        
+    diff_left = np.abs(y_tmp[idx1]-y_tmp[idx2])
+    diff_right = np.abs(y_tmp[idx3]-y_tmp[idx4])
+    diff = max(diff_left, diff_right) * factor
+    
+    if extrem_2 > extrem_3:
+        start = idx1 + np.argmin(np.abs(y_tmp[idx1:idx2+1] - (extrem_2 - diff)))
+        end = idx3 + np.argmin(np.abs(y_tmp[idx3:idx4+1] - (extrem_3 + diff)))
+    else:
+        start = idx1 + np.argmin(np.abs(y_tmp[idx1:idx2+1] - (extrem_2 + diff)))
+        end = idx3 + np.argmin(np.abs(y_tmp[idx3:idx4+1] - (extrem_3 - diff)))
+    return start, end, diff, [idx2, idx3]
+
+def crop_first_two_extrema(x, y, factor=1/10, plot=False):
     """
     This function crops the signal between the first two extrema.
     
@@ -138,60 +178,49 @@ def crop_first_two_extrema(x, y,factor=1/10, plot=False):
         - end (int): The end index of the cropped region.
     """
     # find local maxima
-    max_idx = argrelextrema(y, np.greater)
+    max_idx = argrelextrema(y, np.greater)[0]
+    
+    # check if no local maxima
+    if len(max_idx) == 0:
+        print('no local maxima')
+        return None, None, None, None
+    
     # find local minima
-    min_idx = argrelextrema(y, np.less)
-
-    # find first maximum and minimum
-    max_1_idx = max_idx[0][0]
-    min_1_idx = min_idx[0][0]
-    first_extremum = None
-    second_extremum = None
+    min_idx = argrelextrema(y, np.less)[0]
     
-    # crop signal
-    y_tmp = y.copy()
-    y_tmp[y_tmp > y_tmp[max_1_idx]] = np.inf
-    y_tmp[y_tmp < y_tmp[min_1_idx]] = np.inf
+    # check if no local minima
+    if len(min_idx) == 0:
+        print('no local minima')
+        return None, None, None, None
     
-    if max_1_idx < min_1_idx:
-        start = max_1_idx
-        end = min_1_idx
-        first_extremum = start
-        second_extremum = end
-        
-        # find second maximum
-        max_2_idx = max_idx[0][1]
-        right_extremum_idx = max_2_idx
-        
-        diff_left = np.abs(y_tmp[0]-y_tmp[start])
-        if factor != 0:
-            diff_right = np.abs(y_tmp[max_2_idx]-y_tmp[end])
-            diff = max(diff_left, diff_right) * factor
-            diff_max = np.abs(y_tmp[first_extremum]-y_tmp[second_extremum])
-            if diff_max < diff:
-                diff = diff_max * factor
-            start = np.argmin(np.abs(y_tmp[:start+1] - (y_tmp[max_1_idx] - diff)))
-            end = end + np.argmin(np.abs(y_tmp[end+1:max_2_idx+1] - (y_tmp[min_1_idx] + diff))) + 1
-            
-    else:
-        start = min_1_idx
-        end = max_1_idx
-        first_extremum = start
-        second_extremum = end
-        
-        # find second minimum
-        min_2_idx = min_idx[0][1] if len(min_idx[0]) > 1 else None
-        right_extremum_idx = min_2_idx
+    # exclude saddle points
+    max_idx = max_idx[(y[max_idx] > np.roll(y, 1)[max_idx]) & (y[max_idx] > np.roll(y, -1)[max_idx])]
+    min_idx = min_idx[(y[min_idx] < np.roll(y, 1)[min_idx]) & (y[min_idx] < np.roll(y, -1)[min_idx])]
     
-        diff_left = np.abs(y_tmp[0]-y_tmp[start])
-        if factor != 0:
-            diff_right = np.abs(y_tmp[min_2_idx]-y_tmp[end])
-            diff = max(diff_left, diff_right) * factor
-            diff_max = np.abs(y_tmp[first_extremum]-y_tmp[second_extremum])
-            if diff_max < diff:
-                diff = diff_max * factor
-            start = np.argmin(np.abs(y_tmp[:start+1] - (y_tmp[min_1_idx] + diff)))
-            end = end + np.argmin(np.abs(y_tmp[end+1:min_2_idx+1] - (y_tmp[max_1_idx] - diff))) + 1
+    # get list of all extrema
+    extrema_idx = np.concatenate(([0], max_idx, min_idx))
+    
+    # remove duplicates
+    extrema_idx = np.unique(extrema_idx)
+    
+    # sort extrema
+    extrema_idx = np.sort(extrema_idx)
+    
+    valid = True
+    while valid:
+        if len(extrema_idx) >= 4:
+            idx1, idx2, idx3, idx4 = extrema_idx[:4]
+            if idx3-idx2 < 3:
+                extrema_idx = extrema_idx[1:]
+                continue
+            else:
+                start, end, diff, idx = calculate_diff(y, idx1, idx2, idx3, idx4, factor)
+                valid = False
+        if len(extrema_idx) == 3:
+            idx1, idx2, idx3 = extrema_idx
+            idx4 = len(y)-1
+            start, end, diff, idx = calculate_diff(y, idx1, idx2, idx3, idx4, factor)
+            valid = False
         
     y_crop = y[start:end+1]
     x_crop = x[start:end+1]
@@ -200,7 +229,7 @@ def crop_first_two_extrema(x, y,factor=1/10, plot=False):
         ax.plot(x, y, 'o', color='b', label='data')
         plt.vlines(x[start], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
         plt.vlines(x[end], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
-    return x_crop, y_crop, [start, end], [first_extremum, second_extremum]
+    return x_crop, y_crop, [start, end], idx
 
 
 def white_tophat_trafo(raw, tophat_sigma):
@@ -731,8 +760,8 @@ class ImageAnalysis:
         # If there are ROIs defined, create a mask based on whether each pixel is inside an ROI and above a threshold
         n_roi = len(self.roi_array)
         if n_roi > 0:
-            raw_mask_temp = np.zeros((self.nYCrop, self.nXCrop))
-            self.raw_mask_array = np.array([np.zeros((self.nYCrop, self.nXCrop)) for i in range(n_roi)])
+            raw_mask_temp = np.zeros((self.nYCrop, self.nXCrop), dtype=int)
+            self.raw_mask_array = np.array([np.zeros((self.nYCrop, self.nXCrop), dtype=int) for i in range(n_roi)])
             for i in range(n_roi):
                 roi = self.roi_array[i]
                 # Create a copy of raw_mask
@@ -761,12 +790,12 @@ class ImageAnalysis:
             
         """
         # Create a mask of the ROIs based on the percentage of white pixels in each ROI
-        self.raw_roi_mask = np.zeros((self.nGridY, self.nGridX))
+        self.raw_roi_mask = np.zeros((self.nGridY, self.nGridX), dtype=int)
         white_percentage = np.zeros((self.nGridY, self.nGridX))
         start = time.time()
         if len(self.roi_array) != 0:
-            roi_mask_temp = np.zeros((self.nGridY, self.nGridX))
-            roi_mask_array = np.array([np.zeros((self.nGridY, self.nGridX)) for i in range(len(self.roi_array))])
+            roi_mask_temp = np.zeros((self.nGridY, self.nGridX), dtype=int)
+            roi_mask_array = np.array([np.zeros((self.nGridY, self.nGridX), dtype=int) for i in range(len(self.roi_array))])
             for k in range(len(self.roi_array)):
                 raw_mask = self.raw_mask_array[k]
                 for i in range(self.nGridY):
@@ -944,10 +973,22 @@ class ImageAnalysis:
             - None
         """
         self.raw2 = raw_substrate2
-        
-    def calculate_cross_correlation(self, tophat=True,  plot=True):
+    def calc_all_ccf(self, plot=True):
         """
-        Calculates the cross-correlation between two images. The cross-correlation is calculated for each ROI and the detected structures in it.
+        Calculate the cross-correlation between two images for this instance and in all instances of subclass ROI. The cross-correlation is calculated for each ROI and the detected structures in it.
+        """
+        if len(self.roi_instances) > 0:
+            for i in range(len(self.roi_instances)):
+                self.roi_instances[i].calculate_own_cross_correlation(plot=False)
+            self.corr_length = self.roi_instances[0].corr_length
+        else:
+            self.calculate_own_cross_correlation(plot=True)
+        if plot:
+            self.plot_cross_correlation()
+            
+    def calculate_own_cross_correlation(self, tophat=True,  plot=True):
+        """
+        Calculates the cross-correlation between two images for this instance. The cross-correlation is calculated for each ROI and the detected structures in it.
 
         TODO: Calculate cross-correlation in each ROI in self.roi_instances
         Parameter:
@@ -1005,16 +1046,18 @@ class ImageAnalysis:
                         var2 += np.var(linescan2) / (2*kmax+1)                        
 
                     ccf /= np.sqrt(var1 * var2)
-                    ccf_all[i*self.nGridX+j, :] = ccf
+                    ccf_all[i * self.nGridX + j, :] = ccf
 
                     maxlag_plot = len(linescan1) - 1
                     lags = np.arange(-maxlag, maxlag+1) * self.pixSize
                     ind = np.arange(maxlag_plot, 2*maxlag_plot+1)
 
         # Find the valid CCFs/ACFs and calculate the mean
-        self.cff_all = ccf_all
-        # remove nan lines
-        self.ccf_all_valid = ccf_all[~np.isnan(ccf_all).any(axis=1)]
+        self.ccf_all = ccf_all
+        
+        # remove nan linescans
+        self.ccf_mask = ~np.isnan(ccf_all).any(axis=1)
+        self.ccf_all_valid = ccf_all[self.ccf_mask]
         
         self.mean_ccf = np.mean(self.ccf_all_valid, axis=0)
         self.std_mean_ccf = np.std(self.ccf_all_valid, axis=0, ddof=1)
@@ -1027,18 +1070,36 @@ class ImageAnalysis:
             
     def plot_cross_correlation(self):
         fig, ax = plt.subplots(figsize=(12, 10))
-        lags = self.lags[self.ind]
-        #df = pd.DataFrame()
-        #df['lags'] = self.lags[self.ind]
-
-
-        for i in range(len(self.cff_all)):
-            ccf = self.cff_all[i, self.ind]
-            #df[f'ccf_{i}'] = ccf
-            ax.plot(lags, ccf, color='#cccaca')
-        ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
-        ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
-        ax.plot(lags, self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
+        
+        if len(self.roi_instances) > 0:
+            all_ccf = []
+            for i in range(len(self.roi_instances)):
+                roi = self.roi_instances[i]
+                all_ccf.append(roi.ccf_all)
+                lags = roi.lags[roi.ind]
+                self.ind_roi = roi.ind
+                for j in range(len(roi.ccf_all)):
+                    ccf = roi.ccf_all[j, roi.ind]
+                    ax.plot(lags, ccf, color='#cccaca')
+            all_ccf_roi = np.concatenate(all_ccf, axis=0)
+            
+            # Calculate the mean and standard deviation of the combined array
+            self.mean_ccf_all_roi = np.mean(all_ccf_roi, axis=0)
+            self.std_mean_ccf_all_roi = np.std(all_ccf_roi, axis=0, ddof=1)
+            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi], '-', color='#d13111', linewidth=1.8)
+            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] - self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8)
+            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] + self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8)
+        else:
+            lags = self.lags[self.ind]
+	        #df = pd.DataFrame()
+            #df['lags'] = self.lags[self.ind]
+            for i in range(len(self.ccf_all)):
+                ccf = self.ccf_all[i, self.ind]
+		        #df[f'ccf_{i}'] = ccf
+                ax.plot(lags, ccf, color='#cccaca')
+            ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
+            ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
+            ax.plot(lags, self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
         
         ax.set_xlabel(r'$\Delta$ x [$\mu$m]')
         ax.set_xlim(0,self.corr_length)
@@ -1055,15 +1116,16 @@ class ImageAnalysis:
         plt.savefig('ccf_human.png', dpi=300)
         plt.show()
     
-    def calc_fourier_peak_one_ccf(self, i, plot=False):
-        ccf = self.ccf_all_valid[i, self.ind] # y
+    def calc_fourier_peak_one_ccf(self, i):
+        # TODO: modify for ROIs
+        ccf = self.ccf_all[i, self.ind] # y
         lags = self.lags[self.ind] # x
         
         # crop ccf around the first minima and maxima
-        lags_crop, ccf_crop, [start, end], [left, right] = crop_first_two_extrema(lags, ccf, factor=1/10)
-        fit_valid = True
-        #while fit_valid:
-            # fit sine function to the cropped ccf
+        lags_crop, ccf_crop, _, _ = crop_first_two_extrema(lags, ccf, factor=1/10)
+        if lags_crop is None:
+            return None, None, None
+
         try:
             popt, pcov, mse = sine_fit(lags_crop, ccf_crop)
             return popt, pcov, mse
@@ -1075,48 +1137,107 @@ class ImageAnalysis:
             #ax.vlines(lags_crop[0], min(ccf), max(ccf), color='red')
             #ax.vlines(lags_crop[-1], min(ccf), max(ccf), color='red')
             #plt.show()
-            
 
             return None, None, None
 
     def calc_fourier_peak_all_ccf(self, plot=True):
-        n = self.ccf_all_valid.shape[0]
+        # TODO: modify for ROIs
+        n = self.ccf_all.shape[0]
+        
         omega = np.zeros(n)
+        amplitude = np.zeros(n)
         mse = np.zeros(n)
-        valid = np.ones(n, dtype=bool)
+        ccf_fit_valid = np.ones(n, dtype=bool)
+        
         for i in range(n):
-            popt, _, mse_i = self.calc_fourier_peak_one_ccf(i, plot=plot)
-            if popt is not None:
-                omega[i] = popt[0]
-                mse[i] = mse_i
-            else:
-                valid[i] = False
-        omega = omega[valid]
-        mse = mse[valid]
-        n_valid = len(omega)
-        self.valid_ccf = valid
-        print(f'fittings found for {n_valid} of {n} ccfs')
+            if self.ccf_mask[i]:
+                popt, _, mse_i = self.calc_fourier_peak_one_ccf(i)
+                if popt is not None:
+                    omega[i] = popt[2]
+                    amplitude[i] = popt[1]
+                    mse[i] = mse_i
+                else:
+                    ccf_fit_valid[i] = False
+                    
+        omega_valid = omega[ccf_fit_valid & self.ccf_mask]
+        mse_valid = mse[ccf_fit_valid & self.ccf_mask]
+        amplitude_valid = amplitude[ccf_fit_valid & self.ccf_mask]
+        
+        n_valid = len(omega_valid)
+        print(f'fittings found for {n_valid} of {self.ccf_all_valid.shape[0]} valid ccfs')
+        
+        self.ccf_fit_valid = ccf_fit_valid
+        self.amplitude = amplitude
         if plot:
-            fig, ax1 = plt.subplots(figsize=(12, 10))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 10))
             
-            std = np.std(omega)
-            mean_omega = np.mean(omega)
-            min_omega = mean_omega - 3*std
-            max_omega = mean_omega + 3*std
+            std_omega = np.std(omega_valid)
+            mean_omega = np.mean(omega_valid)
+            min_omega = mean_omega - 3*std_omega
+            max_omega = mean_omega + 3*std_omega
             
+            n_bins = 30
             
-            
-            n_bins_omega =int(np.ceil(np.log2(len(omega))) + 1)
-            
-            
-            ax1.hist(omega, bins=n_bins_omega, range=(min_omega, max_omega), histtype='step', density=True)
-            ax1.vlines(mean_omega,0, 5, color='red')
-            ax1.set_xlabel('Omega')
+            n, bins, patches = ax1.hist(omega_valid, bins=n_bins, range=(min_omega, max_omega), histtype='step', density=True)
+            ax1.vlines(mean_omega,0, n.max(), color='red')
+            ax1.set_xlabel(r'$\omega$')
             ax1.set_ylabel('Frequency')
             
- 
+            std_amp = np.std(amplitude_valid)
+            mean_amp = np.mean(amplitude_valid)
+            min_amp = min(np.abs(mean_amp - 3*std_amp), 0)
+            max_amp = mean_amp + 3*std_amp
+            
+            n, bins, patches = ax2.hist(amplitude_valid, bins=n_bins, range=(min_amp, max_amp), histtype='step', density=True)
+            ax2.vlines(mean_amp,0, n.max(), color='red')
+            ax2.set_xlabel('Amplitude')
+            ax2.set_ylabel('Frequency')
             
             plt.show()
+            
+    def filter_top_x_roi(self, x=0.1):
+        """
+        Filter the top x% of ROIs based on the amplitude of the Fourier peak.
+
+        Parameter:
+            - x: The percentage of ROIs to filter.
+
+        Returns:
+            - None
+        """
+        if not hasattr(self, 'amplitude'):
+            self.calc_fourier_peak_all_ccf()
+        # get indices of top x% highest amplitudes 
+        amplitude_valid = self.amplitude[self.ccf_mask & self.ccf_fit_valid]
+        n = len(amplitude_valid)
+        n_top = int(n*x)
+        idx = np.zeros(n_top, dtype=int)
+        amplitude_tmp = np.copy(self.amplitude)
+        for i in range(n_top):
+            idx[i] = np.argmax(amplitude_tmp)
+            amplitude_tmp[idx[i]] = 0
+        self.idx_top = idx
+        self.top_x = x
+        
+    def plot_top_x_roi(self, x=0.1):
+        
+        if not hasattr(self, 'idx_top'):
+            self.filter_top_x_roi(x)
+        if hasattr(self, 'top_x') and self.top_x != x:
+            self.filter_top_x_roi(x)
+        
+        idx = self.idx_top
+        
+        # get rectangles of corresponding ROIs
+        fig, ax = plt.subplots(figsize=(12, 10))
+        ax.imshow(self.raw, cmap='gray')
+        for n in range(len(idx)):
+            i, j = np.unravel_index(idx[n], (self.nGridY, self.nGridX))
+            rect = Rectangle((j*self.roi_size, i*self.roi_size), self.roi_size, self.roi_size, linewidth=1, edgecolor='r', facecolor='none')
+            ax.add_patch(rect)
+        ax.set_title(f'Top {x*100}% of ROIs')
+        plt.show()
+        
             
     def select_roi_manually(self):
         """
@@ -1496,7 +1617,7 @@ class ROI(ImageAnalysis):
         # Your data
         data = anglemap_nonzero.flatten().reshape(-1, 1)  # Flatten the 2D array
 
-        # Calculate WCSS for different numbers of clusters
+        '''# Calculate WCSS for different numbers of clusters
         wcss = []
         for i in range(1, 11):  # start range from 2
             kmeans = KMeans(n_clusters=i, init='k-means++', max_iter=300, n_init=10, random_state=0)
@@ -1518,8 +1639,8 @@ class ROI(ImageAnalysis):
         optimal_clusters = distances.index(max(distances)) + 2  # +2 because range starts at 2
         
         # Fit the KMeans algorithm to the data
-        
-        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster(anglemap, n_clusters=optimal_clusters, print_=True)
+        '''
+        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster(anglemap_nonzero, n_clusters=3, print_=True)
         idx = np.argmax(cluster_percentage_arr)
         mean = cluster_mean_arr[idx]
         std = cluster_std_arr[idx]
@@ -1858,13 +1979,15 @@ def interactive_image_analysis():
             
     
     change = True
-    print(f'Current sigma for steerable filter: {image_analysis.steerable_sigma}\n Aplying steerable filter...')
+    print(f'Current sigma for steerable filter: {image_analysis.steerable_sigma}\n Applying steerable filter...')
     image_analysis.apply_steerable_filter()
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma)
+    
     while change:
         tmp = input('Change sigma for steerable filter? (y/N)')
         if tmp == 'y' or tmp == 'Y':
             image_analysis.choose_steerable_sigma()
+            
             proceed = input(f'Current sigma for steerable filter: {image_analysis.steerable_sigma}\nProceed? (Y/n)')
             if proceed == 'n' or proceed == 'N':
                 change = True
@@ -1876,20 +1999,23 @@ def interactive_image_analysis():
     image_analysis.apply_steerable_filter_roi(int(image_analysis.roi_size/2))
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
     
+    
     # calculate cross correlation
     print('Calculating the cross correlation:')
-    image_analysis.calculate_cross_correlation(tophat=True, plot=True)
+    image_analysis.calc_all_ccf()
+    #return image_analysis
     image_analysis.calc_fourier_peak_all_ccf()
+    image_analysis.plot_top_x_roi()
     
     #embed()
 def non_interactive():
     path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
-    
+    #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
     # load the image
     tif = TiffFile(path)
     n_slices = int(len(tif.pages)/4)
-    mask_channel = 3
-    slice_index = 0
+    mask_channel = 3 #0 # 3
+    slice_index = 0 #9 # 0
     substrate1_channel = 0
     substrate2_channel = 3
     
@@ -1910,14 +2036,19 @@ def non_interactive():
     
     image_analysis.mask_background()
     image_analysis.apply_steerable_filter()
-    image_analysis.calculate_cross_correlation(tophat=True, plot=False)
-    image_analysis.calc_fourier_peak_all_ccf(plot=True)
-        
+    image_analysis.calc_all_ccf()
+    #return image_analysis
+    image_analysis.calc_fourier_peak_all_ccf()
+    image_analysis.plot_top_x_roi()
+    #embed()
+
+
 def main():
     
     
     interactive_image_analysis()
     #non_interactive()
+
     
  
 if __name__ == "__main__":
