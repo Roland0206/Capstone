@@ -231,6 +231,33 @@ def crop_first_two_extrema(x, y, factor=1/10, plot=False):
         plt.vlines(x[end], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
     return x_crop, y_crop, [start, end], idx
 
+def plot_fourier_peaks(omega_valid, amplitude_valid):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 10))
+    
+    std_omega = np.std(omega_valid)
+    mean_omega = np.mean(omega_valid)
+    min_omega = mean_omega - 3*std_omega
+    max_omega = mean_omega + 3*std_omega
+    
+    n_bins = 30
+    
+    n, bins, patches = ax1.hist(omega_valid, bins=n_bins, range=(min_omega, max_omega), histtype='step', density=True)
+    ax1.vlines(mean_omega,0, n.max(), color='red')
+    ax1.set_xlabel(r'$\omega$')
+    ax1.set_ylabel('Frequency')
+    
+    std_amp = np.std(amplitude_valid)
+    mean_amp = np.mean(amplitude_valid)
+    min_amp = min(np.abs(mean_amp - 3*std_amp), 0)
+    max_amp = mean_amp + 3*std_amp
+    
+    n, bins, patches = ax2.hist(amplitude_valid, bins=n_bins, range=(min_amp, max_amp), histtype='step', density=True)
+    ax2.vlines(mean_amp,0, n.max(), color='red')
+    ax2.set_xlabel('Amplitude')
+    ax2.set_ylabel('Frequency')
+    
+    plt.show()
+
 
 def white_tophat_trafo(raw, tophat_sigma):
     """
@@ -294,7 +321,7 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     if len(roi_instances)>0:
         res1_display = ax2.imshow(res, cmap='gray', vmin=np.min(res), vmax=np.max(res))
         
-        ax3 = plot_steerable_filter_roi(roi_instances, ax3)
+        ax3 = __plot_steerable_filter_roi(roi_instances, ax3)
     
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
     
@@ -703,17 +730,21 @@ class ImageAnalysis:
         """
         return self.mask_thresh, self.roi_size, self.roi_thresh, self.gblur_sigma
     
-    def apply_steerable_filter_roi(self, smaller_roi_size):
+    def apply_steerable_filter(self, smaller_roi_size=None, apply_to_ROI=True):
         """
-        apply the steerable filter to each ROI (region of interest in self.raw) in self.roi_instances with a smaller ROI size (ROIs for mask creation)
+        If the anglemap is empty, apply the steerable filter the instance of the class ImageAnalysis.
+        If apply_to_ROI is True: apply the steerable filter to each ROI (region of interest in self.raw) in self.roi_instances with a smaller ROI size (ROIs for mask creation)
         Parameter:
             - smaller_roi_size: The size of the ROIs for mask creation in the area of interests
         """
-        if len(self.roi_instances)==0:
-            return
-        # check if roi is instance of class ROI
-        if not isinstance(self.roi_instances[0], ROI):
-            raise TypeError('roi_instances must be a list of ROI objects.')
+        
+        if len(self.anglemap)==0 and smaller_roi_size is None:
+            self.__apply_steerable_filter()
+            if not apply_to_ROI:
+                return
+        if smaller_roi_size is None:
+            smaller_roi_size = self.roi_size
+            
         for i in range(len(self.roi_instances)):
             # set the superclass of each ROI instance to self, then the ROI instance has the same attributes as self
             self.roi_instances[i].set_superclass(self)
@@ -833,7 +864,7 @@ class ImageAnalysis:
         self.res = pd.read_csv(path, header=None).to_numpy()
  
         
-    def apply_steerable_filter(self, angle_array=None, save=True):
+    def __apply_steerable_filter(self, angle_array=None, save=True):
         """
         This method applies a steerable filter to the image, calculates the angle response, and creates an angle map.
         It also calculates the start xi and endposition yi of each detected structure based on the angle map.
@@ -973,20 +1004,21 @@ class ImageAnalysis:
             - None
         """
         self.raw2 = raw_substrate2
+        
     def calc_all_ccf(self, plot=True):
         """
         Calculate the cross-correlation between two images for this instance and in all instances of subclass ROI. The cross-correlation is calculated for each ROI and the detected structures in it.
         """
         if len(self.roi_instances) > 0:
             for i in range(len(self.roi_instances)):
-                self.roi_instances[i].calculate_own_cross_correlation(plot=False)
+                self.roi_instances[i].__calculate_own_cross_correlation(plot=False)
             self.corr_length = self.roi_instances[0].corr_length
         else:
-            self.calculate_own_cross_correlation(plot=True)
+            self.__calculate_own_cross_correlation(plot=True)
         if plot:
             self.plot_cross_correlation()
             
-    def calculate_own_cross_correlation(self, tophat=True,  plot=True):
+    def __calculate_own_cross_correlation(self, tophat=True,  plot=True):
         """
         Calculates the cross-correlation between two images for this instance. The cross-correlation is calculated for each ROI and the detected structures in it.
 
@@ -996,7 +1028,7 @@ class ImageAnalysis:
             - plot: If True, the cross-correlation is plotted.
         """
         
-        # check if tophat filter has been applied
+        # check if tophat filter should be applied
         if tophat:
             self.raw1_tophat = white_tophat_trafo(self.raw1, self.tophat_sigma)
             self.raw2_tophat = white_tophat_trafo(self.raw2, self.tophat_sigma)
@@ -1084,8 +1116,8 @@ class ImageAnalysis:
             all_ccf_roi = np.concatenate(all_ccf, axis=0)
             
             # Calculate the mean and standard deviation of the combined array
-            self.mean_ccf_all_roi = np.mean(all_ccf_roi, axis=0)
-            self.std_mean_ccf_all_roi = np.std(all_ccf_roi, axis=0, ddof=1)
+            self.mean_ccf_all_roi = np.nanmean(all_ccf_roi, axis=0)
+            self.std_mean_ccf_all_roi = np.nanstd(all_ccf_roi, axis=0, ddof=1)
             ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi], '-', color='#d13111', linewidth=1.8)
             ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] - self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8)
             ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] + self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8)
@@ -1139,8 +1171,26 @@ class ImageAnalysis:
             #plt.show()
 
             return None, None, None
-
-    def calc_fourier_peak_all_ccf(self, plot=True):
+        
+    def calc_fourier_peaks(self, plot=True):
+        if len(self.roi_instances)==0:
+            self.__calc_fourier_peaks(plot)
+        else:
+            for i in range(len(self.roi_instances)):
+                self.roi_instances[i].__calc_fourier_peaks()
+            if plot:
+                omega_arr = []
+                amplitude_arr = []
+                for i in range(len(self.roi_instances)):
+                    omega_arr.extend(self.roi_instances[i].omega[self.roi_instances[i].ccf_mask & self.roi_instances[i].ccf_fit_valid])
+                    amplitude_arr.extend(self.roi_instances[i].amplitude[self.roi_instances[i].ccf_mask & self.roi_instances[i].ccf_fit_valid])
+                omega = np.array(omega_arr).flatten()
+                amplitude = np.array(amplitude_arr).flatten()
+                plot_fourier_peaks(omega, amplitude)
+                    
+            
+        
+    def __calc_fourier_peaks(self, plot=False):
         # TODO: modify for ROIs
         n = self.ccf_all.shape[0]
         
@@ -1168,32 +1218,9 @@ class ImageAnalysis:
         
         self.ccf_fit_valid = ccf_fit_valid
         self.amplitude = amplitude
+        self.omega = omega
         if plot:
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 10))
-            
-            std_omega = np.std(omega_valid)
-            mean_omega = np.mean(omega_valid)
-            min_omega = mean_omega - 3*std_omega
-            max_omega = mean_omega + 3*std_omega
-            
-            n_bins = 30
-            
-            n, bins, patches = ax1.hist(omega_valid, bins=n_bins, range=(min_omega, max_omega), histtype='step', density=True)
-            ax1.vlines(mean_omega,0, n.max(), color='red')
-            ax1.set_xlabel(r'$\omega$')
-            ax1.set_ylabel('Frequency')
-            
-            std_amp = np.std(amplitude_valid)
-            mean_amp = np.mean(amplitude_valid)
-            min_amp = min(np.abs(mean_amp - 3*std_amp), 0)
-            max_amp = mean_amp + 3*std_amp
-            
-            n, bins, patches = ax2.hist(amplitude_valid, bins=n_bins, range=(min_amp, max_amp), histtype='step', density=True)
-            ax2.vlines(mean_amp,0, n.max(), color='red')
-            ax2.set_xlabel('Amplitude')
-            ax2.set_ylabel('Frequency')
-            
-            plt.show()
+            plot_fourier_peaks(omega_valid, amplitude_valid)
             
     def filter_top_x_roi(self, x=0.1):
         """
@@ -1205,8 +1232,9 @@ class ImageAnalysis:
         Returns:
             - None
         """
+        
         if not hasattr(self, 'amplitude'):
-            self.calc_fourier_peak_all_ccf()
+            self.calc_fourier_peaks()
         # get indices of top x% highest amplitudes 
         amplitude_valid = self.amplitude[self.ccf_mask & self.ccf_fit_valid]
         n = len(amplitude_valid)
@@ -1220,21 +1248,36 @@ class ImageAnalysis:
         self.top_x = x
         
     def plot_top_x_roi(self, x=0.1):
-        
-        if not hasattr(self, 'idx_top'):
-            self.filter_top_x_roi(x)
-        if hasattr(self, 'top_x') and self.top_x != x:
-            self.filter_top_x_roi(x)
-        
-        idx = self.idx_top
-        
-        # get rectangles of corresponding ROIs
         fig, ax = plt.subplots(figsize=(12, 10))
         ax.imshow(self.raw, cmap='gray')
-        for n in range(len(idx)):
-            i, j = np.unravel_index(idx[n], (self.nGridY, self.nGridX))
-            rect = Rectangle((j*self.roi_size, i*self.roi_size), self.roi_size, self.roi_size, linewidth=1, edgecolor='r', facecolor='none')
-            ax.add_patch(rect)
+        if len(self.roi_instances) == 0:
+            if not hasattr(self, 'idx_top'):
+                self.filter_top_x_roi(x)
+            if hasattr(self, 'top_x') and self.top_x != x:
+                self.filter_top_x_roi(x)
+
+            idx = self.idx_top
+            
+            # get rectangles of corresponding ROIs
+            for n in range(len(idx)):
+                i, j = np.unravel_index(idx[n], (self.nGridY, self.nGridX))
+                rect = Rectangle((j*self.roi_size, i*self.roi_size), self.roi_size, self.roi_size, linewidth=1, edgecolor='r', facecolor='none')
+                ax.add_patch(rect)
+        else:
+        
+            for i in range(len(self.roi_instances)):
+                if not hasattr(self.roi_instances[i], 'idx_top'):
+                    self.roi_instances[i].filter_top_x_roi(x)
+                if hasattr(self.roi_instances[i], 'top_x') and self.roi_instances[i].top_x != x:
+                    self.roi_instances[i].filter_top_x_roi(x)
+                roi = self.roi_instances[i]
+                idx = roi.idx_top
+                # get rectangles of corresponding ROIs
+                for n in range(len(idx)):
+                    i, j = np.unravel_index(idx[n], (roi.nGridY, roi.nGridX))
+                    rect = Rectangle((roi.nx0*self.nGridX+j*roi.roi_size, roi.ny0*self.nGridY+i*roi.roi_size), roi.roi_size, roi.roi_size, linewidth=1, edgecolor='r', facecolor='none')
+                    ax.add_patch(rect)
+                
         ax.set_title(f'Top {x*100}% of ROIs')
         plt.show()
         
@@ -1358,7 +1401,7 @@ class ImageAnalysis:
 
         # Apply the steerable filter if it hasn't been applied yet
         if not self.steerable_bool:
-            self.apply_steerable_filter()
+            self.__apply_steerable_filter()
 
         # Load the results from a CSV file
         self.load_res_from_csv()
@@ -1371,7 +1414,7 @@ class ImageAnalysis:
         # Define a function to update the images whenever the slider value changes
         def update_image(val):
             self.steerable_sigma = val
-            self.apply_steerable_filter()
+            self.__apply_steerable_filter()
             self.load_res_from_csv()
             res1_display.set_data(self.res)
             raw_new = np.ones((self.nX, self.nY))
@@ -1394,7 +1437,7 @@ class ImageAnalysis:
         # Display the figure
         plt.show()
         
-def plot_steerable_filter_roi(roi_instances, ax):
+def __plot_steerable_filter_roi(roi_instances, ax):
     """
     Plot the ROIs in the image self.raw.
     
@@ -1437,6 +1480,15 @@ class ROI(ImageAnalysis):
         self.pad_angle = 0
         self.set_superclass(image_analysis)
         self.nAngles = 30
+        
+    def __apply_steerable_filter(self, angle_array=None, save=True):
+        return self._ImageAnalysis__apply_steerable_filter(angle_array, save)
+    
+    def __calculate_own_cross_correlation(self, tophat=True,  plot=True):
+        return self._ImageAnalysis__calculate_own_cross_correlation(tophat, plot)
+    
+    def __calc_fourier_peaks(self, plot=False):
+        return self._ImageAnalysis__calc_fourier_peaks(plot)
         
     def calc_area(self):
         """
@@ -1649,7 +1701,7 @@ class ROI(ImageAnalysis):
         angle_array = np.linspace(min_angle, max_angle, self.nAngles, endpoint=True)
         angle_array = angle_array * np.pi / 180
         
-        self.apply_steerable_filter(angle_array)
+        self.__apply_steerable_filter(angle_array)
         plot_steerable_filter_results(self.raw, self.res, self.xy_values_k0, self.steerable_sigma)
  
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
@@ -1980,7 +2032,7 @@ def interactive_image_analysis():
     
     change = True
     print(f'Current sigma for steerable filter: {image_analysis.steerable_sigma}\n Applying steerable filter...')
-    image_analysis.apply_steerable_filter()
+    image_analysis.apply_steerable_filter(apply_to_ROI=False)
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma)
     
     while change:
@@ -1996,7 +2048,7 @@ def interactive_image_analysis():
         else:
             change = False
     np.savetxt('comparison/anglemap_accum.csv', image_analysis.anglemap, delimiter=',')
-    image_analysis.apply_steerable_filter_roi(int(image_analysis.roi_size/2))
+    image_analysis.apply_steerable_filter(int(image_analysis.roi_size/2))
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
     
     
@@ -2004,7 +2056,7 @@ def interactive_image_analysis():
     print('Calculating the cross correlation:')
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.calc_fourier_peak_all_ccf()
+    image_analysis.calc_fourier_peaks()
     image_analysis.plot_top_x_roi()
     
     #embed()
@@ -2038,7 +2090,7 @@ def non_interactive():
     image_analysis.apply_steerable_filter()
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.calc_fourier_peak_all_ccf()
+    image_analysis.calc_fourier_peaks()
     image_analysis.plot_top_x_roi()
     #embed()
 
@@ -2046,8 +2098,8 @@ def non_interactive():
 def main():
     
     
-    interactive_image_analysis()
-    #non_interactive()
+    #interactive_image_analysis()
+    non_interactive()
 
     
  
