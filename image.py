@@ -249,9 +249,9 @@ def plot_fourier_peaks(omega_valid, amplitude_valid):
     std_amp = np.std(amplitude_valid)
     mean_amp = np.mean(amplitude_valid)
     min_amp = min(np.abs(mean_amp - 3*std_amp), 0)
-    max_amp = mean_amp + 3*std_amp
+    min_amp = mean_amp + 3*std_amp
     
-    n, bins, patches = ax2.hist(amplitude_valid, bins=n_bins, range=(min_amp, max_amp), histtype='step', density=True)
+    n, bins, patches = ax2.hist(amplitude_valid, bins=n_bins, range=(min_amp, min_amp), histtype='step', density=True)
     ax2.vlines(mean_amp,0, n.max(), color='red')
     ax2.set_xlabel('Amplitude')
     ax2.set_ylabel('Frequency')
@@ -307,8 +307,6 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     ax2 = fig.add_subplot(1, 3, 2)
     ax2.set_title(f'Steerable filter (sigma = {steerable_sigma} pix.)')
     ax3 = fig.add_subplot(1, 3, 3)
-        
- 
 
     raw_display = ax1.imshow(raw, cmap='gray', vmin=qlow, vmax=qhigh)
     
@@ -321,7 +319,7 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     if len(roi_instances)>0:
         res1_display = ax2.imshow(res, cmap='gray', vmin=np.min(res), vmax=np.max(res))
         
-        ax3 = __plot_steerable_filter_roi(roi_instances, ax3)
+        ax3 = plot_steerable_filter_roi(roi_instances, ax3)
     
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
     
@@ -1014,7 +1012,7 @@ class ImageAnalysis:
                 self.roi_instances[i].__calculate_own_cross_correlation(plot=False)
             self.corr_length = self.roi_instances[0].corr_length
         else:
-            self.__calculate_own_cross_correlation(plot=True)
+            self.__calculate_own_cross_correlation(plot=False)
         if plot:
             self.plot_cross_correlation()
             
@@ -1222,42 +1220,72 @@ class ImageAnalysis:
         if plot:
             plot_fourier_peaks(omega_valid, amplitude_valid)
             
-    def filter_top_x_roi(self, x=0.1):
+    def get_amplitude_top_x(self, x=0.1):
         """
-        Filter the top x% of ROIs based on the amplitude of the Fourier peak.
+        Retrieve the minimum Fourier peak amplitude from the top x% of ROIs, ranked by their Fourier peak amplitudes.
 
-        Parameter:
-            - x: The percentage of ROIs to filter.
+        Parameters:
+            - x: The percentage of ROIs to consider, selected based on their Fourier peak amplitudes.
 
         Returns:
-            - None
+            - min_amp: The minimum Fourier peak amplitude among the selected top x% of ROIs.
         """
         
         if not hasattr(self, 'amplitude'):
             self.calc_fourier_peaks()
-        # get indices of top x% highest amplitudes 
-        amplitude_valid = self.amplitude[self.ccf_mask & self.ccf_fit_valid]
-        n = len(amplitude_valid)
+            
+        # get indices of top x% highest amplitudes
+        if len(self.roi_instances) > 0:
+            amp_valid = []
+            for i in range(len(self.roi_instances)):
+                roi = self.roi_instances[i]
+                amp_valid_tmp = roi.amplitude[roi.ccf_mask & roi.ccf_fit_valid]
+                amp_valid.extend(amp_valid_tmp)
+            n = len(amp_valid)
+        else:
+            amp_valid = self.amplitude[self.ccf_mask & self.ccf_fit_valid]
+            n = len(amp_valid)
+            
         n_top = int(n*x)
-        idx = np.zeros(n_top, dtype=int)
-        amplitude_tmp = np.copy(self.amplitude)
-        for i in range(n_top):
-            idx[i] = np.argmax(amplitude_tmp)
-            amplitude_tmp[idx[i]] = 0
-        self.idx_top = idx
         self.top_x = x
+        return np.sort(amp_valid)[-n_top]
+    
+    def set_idx_top_x_roi(self, min_amp):
+        """
+        Identify the ROIs with Fourier peak amplitudes above a threshold value.
+        
+        Parameter:
+            - min_amp: The minimum Fourier peak amplitude to consider.
+        
+        This method updates the following instance variables:
+            - idx_top: The indices of the ROIs with Fourier peak amplitudes above the threshold value.
+        """
+        if len(self.roi_instances) > 0:
+            for i in range(len(self.roi_instances)):
+                self.roi_instances[i].set_idx_top_x_roi(min_amp)
+        else:
+            amp = self.amplitude
+            idx = np.where(amp >= min_amp)[0]
+            self.idx_top = idx
         
     def plot_top_x_roi(self, x=0.1):
+        """
+        Plot the top x% of ROIs, ranked by their Fourier peak amplitudes.
+        
+        Parameter:
+            - x: The percentage of ROIs to consider, selected based on their Fourier peak amplitudes.
+        """
+        if not hasattr(self, 'idx_top'):
+            min_amp = self.get_amplitude_top_x(x)
+            self.set_idx_top_x_roi(min_amp)
+        if hasattr(self, 'top_x') and self.top_x != x:
+            min_amp = self.get_amplitude_top_x(x)
+            self.set_idx_top_x_roi(min_amp)
+        
         fig, ax = plt.subplots(figsize=(12, 10))
         ax.imshow(self.raw, cmap='gray')
         if len(self.roi_instances) == 0:
-            if not hasattr(self, 'idx_top'):
-                self.filter_top_x_roi(x)
-            if hasattr(self, 'top_x') and self.top_x != x:
-                self.filter_top_x_roi(x)
-
             idx = self.idx_top
-            
             # get rectangles of corresponding ROIs
             for n in range(len(idx)):
                 i, j = np.unravel_index(idx[n], (self.nGridY, self.nGridX))
@@ -1266,10 +1294,6 @@ class ImageAnalysis:
         else:
         
             for i in range(len(self.roi_instances)):
-                if not hasattr(self.roi_instances[i], 'idx_top'):
-                    self.roi_instances[i].filter_top_x_roi(x)
-                if hasattr(self.roi_instances[i], 'top_x') and self.roi_instances[i].top_x != x:
-                    self.roi_instances[i].filter_top_x_roi(x)
                 roi = self.roi_instances[i]
                 idx = roi.idx_top
                 # get rectangles of corresponding ROIs
@@ -1437,7 +1461,7 @@ class ImageAnalysis:
         # Display the figure
         plt.show()
         
-def __plot_steerable_filter_roi(roi_instances, ax):
+def plot_steerable_filter_roi(roi_instances, ax):
     """
     Plot the ROIs in the image self.raw.
     
@@ -2060,6 +2084,7 @@ def interactive_image_analysis():
     image_analysis.plot_top_x_roi()
     
     #embed()
+    
 def non_interactive():
     path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
     #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
@@ -2098,8 +2123,8 @@ def non_interactive():
 def main():
     
     
-    #interactive_image_analysis()
-    non_interactive()
+    interactive_image_analysis()
+    #non_interactive()
 
     
  
