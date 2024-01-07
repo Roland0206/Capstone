@@ -1170,7 +1170,7 @@ class ImageAnalysis:
                 print(f"An error occurred during FFT for {i}th ccf: ", er)
             popt, pcov, mse = sine_fit(lags_crop, ccf_crop, guess)
             if np.abs(popt[1])>1.5*np.abs(max(ccf_crop)-min(ccf_crop))/2:
-                print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(popt[1], 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
+                print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
                 return None, None, None
             return popt, pcov, mse
         
@@ -1312,7 +1312,7 @@ class ImageAnalysis:
                 # get rectangles of corresponding ROIs
                 for n in range(len(idx)):
                     i, j = np.unravel_index(idx[n], (roi.nGridY, roi.nGridX))
-                    rect = Rectangle((roi.nx0*self.nGridX+j*roi.roi_size, roi.ny0*self.nGridY+i*roi.roi_size), roi.roi_size, roi.roi_size, linewidth=1, edgecolor='r', facecolor='none')
+                    rect = Rectangle((roi.nx0*self.roi_size+j*roi.roi_size, roi.ny0*self.roi_size+i*roi.roi_size), roi.roi_size, roi.roi_size, linewidth=1, edgecolor='r', facecolor='none')
                     ax.add_patch(rect)
                 
         ax.set_title(f'Top {x*100}% of ROIs')
@@ -2124,6 +2124,11 @@ def interactive_image_analysis():
             ccf_all = np.concatenate([roi.ccf_all[:,roi.ind] for roi in image_analysis.roi_instances])
             ccf_mask = np.concatenate([roi.ccf_mask for roi in image_analysis.roi_instances])
             ccf_fit_valid = np.concatenate([roi.ccf_fit_valid for roi in image_analysis.roi_instances])
+        else:
+            lags = image_analysis.lags[image_analysis.ind]
+            ccf_all = image_analysis.ccf_all[:,image_analysis.ind]
+            ccf_mask = image_analysis.ccf_mask
+            ccf_fit_valid = image_analysis.ccf_fit_valid
         
         np.savetxt('comparison/lags.csv', lags, delimiter=',')
         np.savetxt('comparison/ccf_all.csv', ccf_all, delimiter=',')
