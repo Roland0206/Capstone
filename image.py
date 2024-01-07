@@ -73,7 +73,7 @@ def sine_func(x, offs, amp, f, phi):
     """
     return offs + amp * np.sin(2 * np.pi * f * x + phi)
 
-def sine_fit(x, y, plot=False, tol=0.00025):
+def sine_fit(x, y, guess=None, plot=False, tol=0.00025):
     """
     Estimate Parameter of a noisy sine wave by FFT and non-linear fitting.
     
@@ -90,17 +90,12 @@ def sine_fit(x, y, plot=False, tol=0.00025):
     """
     
     
-    # Estimate frequency using FFT
-    N = len(y)
-    f = np.linspace(0, 1, N)  # Frequency range
-    yf = fft(y)
-    estimate_f = f[np.argmax(np.abs(yf[1:N//2]))]  # Exclude offset
     
-    # Initial guess for the Parameter
-    guess = [np.mean(y), np.std(y), estimate_f, 0]
-    
-    # Perform the fit
-    popt, pcov = curve_fit(sine_func, x, y, p0=guess)
+    if guess is None:
+        popt, pcov = curve_fit(sine_func, x, y)
+    else:
+        # Perform the fit
+        popt, pcov = curve_fit(sine_func, x, y, p0=guess)
     
     # Calculate mean squared error
     mse = np.mean((y - sine_func(x, *popt)) ** 2)
@@ -186,19 +181,19 @@ def crop_first_two_extrema(x, y, factor=1/10, plot=False):
         return None, None, None, None
     
     # find local minima
-    min_idx = argrelextrema(y, np.less)[0]
+    min_angledx = argrelextrema(y, np.less)[0]
     
     # check if no local minima
-    if len(min_idx) == 0:
+    if len(min_angledx) == 0:
         print('no local minima')
         return None, None, None, None
     
     # exclude saddle points
     max_idx = max_idx[(y[max_idx] > np.roll(y, 1)[max_idx]) & (y[max_idx] > np.roll(y, -1)[max_idx])]
-    min_idx = min_idx[(y[min_idx] < np.roll(y, 1)[min_idx]) & (y[min_idx] < np.roll(y, -1)[min_idx])]
+    min_angledx = min_angledx[(y[min_angledx] < np.roll(y, 1)[min_angledx]) & (y[min_angledx] < np.roll(y, -1)[min_angledx])]
     
     # get list of all extrema
-    extrema_idx = np.concatenate(([0], max_idx, min_idx))
+    extrema_idx = np.concatenate(([0], max_idx, min_angledx))
     
     # remove duplicates
     extrema_idx = np.unique(extrema_idx)
@@ -312,9 +307,15 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     
     raw_new = np.ones((raw.shape[0], raw.shape[1]))
     res2_display = ax3.imshow(raw, cmap='gray', vmin=qlow, vmax=qhigh)
-    for i in range(xy_values_k0.shape[0]):
-        ax3.plot(xy_values_k0[i, 0], xy_values_k0[i, 1], 'c')
-        res1_display = ax2.imshow(res, cmap='gray', vmin=np.min(res), vmax=np.max(res))
+    
+    x_values = xy_values_k0[:, 0].reshape(-1, 2)
+    x_start, x_end = x_values.T
+    
+    y_values = xy_values_k0[:, 1].reshape(-1, 2)
+    y_start, y_end = y_values.T
+    
+    ax3.plot([x_start, x_end],[y_start, y_end], 'c')
+    res1_display = ax2.imshow(res, cmap='gray', vmin=np.min(res), vmax=np.max(res))
 
     if len(roi_instances)>0:
         res1_display = ax2.imshow(res, cmap='gray', vmin=np.min(res), vmax=np.max(res))
@@ -744,14 +745,16 @@ class ImageAnalysis:
             smaller_roi_size = self.roi_size
             
         for i in range(len(self.roi_instances)):
+            # reduce the size of the ROI to the smaller_roi_size
+            self.roi_instances[i].set_roi_size(smaller_roi_size)
+            
             # set the superclass of each ROI instance to self, then the ROI instance has the same attributes as self
             self.roi_instances[i].set_superclass(self)
             
             # crop the images of the superclass to the ROI
             self.roi_instances[i].crop_images_superclass()
             
-            # reduce the size of the ROI to the smaller_roi_size
-            self.roi_instances[i].set_roi_size(smaller_roi_size)
+            
             #TODO: maybe also change other Parameter for mask creation?
             
             # apply the steerable filter to the ROI (to the cropped images of the superclass)
@@ -920,10 +923,10 @@ class ImageAnalysis:
                 raise ValueError(f'nAngles must be smaller than 180 for even orders M for the steerable filter (here M=2)')
             rot = np.transpose(sd.get_angle_response(self.nAngles))
             angle_step = 180/self.nAngles
-            min_I = 0
+            min_angle = 0
         else:
             # Calculate the response of the filter to rotated versions of the filter, at the angles in angle_array
-            min_I = min(angle_array*180/np.pi)
+            min_angle = min(angle_array*180/np.pi)
             angle_step = (angle_array[1]-angle_array[0])*180/np.pi
             rot = np.transpose(sd.get_angle_response_with_array(angle_array))
         for i in range(rot.shape[2]):
@@ -957,9 +960,9 @@ class ImageAnalysis:
                         I = 0
                     else:
                         M, I = np.nanmax(idxMax), np.nanargmax(idxMax)
-                    # self.rot as shape (nY, nX, nAngles) so I is the index of the angle with the maximum response. To extract the angle, we need to multiply I by angle_step and add min_I where min_I is the minimum angle in angle_array or 0 if we calculated the angle map for the whole range of angles from 0 to 180 degrees
-                    I  = I * angle_step + min_I
-                    anglemap[i, j] = I 
+                    # self.rot as shape (nY, nX, nAngles) so I is the index of the angle with the maximum response. To extract the angle, we need to multiply I by angle_step and add min_angle where min_angle is the minimum angle in angle_array or 0 if we calculated the angle map for the whole range of angles from 0 to 180 degrees
+                    I  = I * angle_step + min_angle
+                    anglemap[i, j] = I
 
         # Calculate the x and y coordinates of detected structures for each ROI based on the angle map
         xy_values_k0 = np.zeros((self.nGridY*self.nGridX, 2, 2))
@@ -1108,9 +1111,7 @@ class ImageAnalysis:
                 all_ccf.append(roi.ccf_all)
                 lags = roi.lags[roi.ind]
                 self.ind_roi = roi.ind
-                for j in range(len(roi.ccf_all)):
-                    ccf = roi.ccf_all[j, roi.ind]
-                    ax.plot(lags, ccf, color='#cccaca')
+                ax.plot(np.tile(lags, (len(roi.ccf_all), 1)).T, roi.ccf_all[:, roi.ind].T, color='#cccaca')
             all_ccf_roi = np.concatenate(all_ccf, axis=0)
             
             # Calculate the mean and standard deviation of the combined array
@@ -1123,10 +1124,7 @@ class ImageAnalysis:
             lags = self.lags[self.ind]
 	        #df = pd.DataFrame()
             #df['lags'] = self.lags[self.ind]
-            for i in range(len(self.ccf_all)):
-                ccf = self.ccf_all[i, self.ind]
-		        #df[f'ccf_{i}'] = ccf
-                ax.plot(lags, ccf, color='#cccaca')
+            ax.plot(np.tile(lags, (len(self.ccf_all_valid), 1)).T, self.ccf_all_valid[:, self.ind].T, color='#cccaca')
             ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
             ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
             ax.plot(lags, self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
@@ -1147,17 +1145,33 @@ class ImageAnalysis:
         plt.show()
     
     def calc_fourier_peak_one_ccf(self, i):
-        # TODO: modify for ROIs
         ccf = self.ccf_all[i, self.ind] # y
         lags = self.lags[self.ind] # x
         
         # crop ccf around the first minima and maxima
         lags_crop, ccf_crop, _, _ = crop_first_two_extrema(lags, ccf, factor=1/10)
+        
+       
         if lags_crop is None:
             return None, None, None
-
+        
         try:
-            popt, pcov, mse = sine_fit(lags_crop, ccf_crop)
+            guess = None
+            try:
+                # Estimate frequency using FFT
+                N = len(ccf_crop)
+                f = np.linspace(0, 1, N)  # Frequency range
+                yf = fft(ccf_crop)
+                estimate_f = f[np.argmax(np.abs(yf[1:N//2]))] 
+                
+                # Initial guess for the Parameter
+                guess = [np.mean(ccf_crop), np.std(ccf_crop), estimate_f, 0]
+            except Exception as er:
+                print(f"An error occurred during FFT for {i}th ccf: ", er)
+            popt, pcov, mse = sine_fit(lags_crop, ccf_crop, guess)
+            if np.abs(popt[1])>1.5*np.abs(max(ccf_crop)-min(ccf_crop))/2:
+                print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(popt[1], 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
+                return None, None, None
             return popt, pcov, mse
         
         except Exception as e:
@@ -1170,7 +1184,7 @@ class ImageAnalysis:
 
             return None, None, None
         
-    def calc_fourier_peaks(self, plot=True):
+    def calc_fourier_peaks(self, plot=False):
         if len(self.roi_instances)==0:
             self.__calc_fourier_peaks(plot)
         else:
@@ -1189,7 +1203,6 @@ class ImageAnalysis:
             
         
     def __calc_fourier_peaks(self, plot=False):
-        # TODO: modify for ROIs
         n = self.ccf_all.shape[0]
         
         omega = np.zeros(n)
@@ -1451,8 +1464,9 @@ class ImageAnalysis:
             while len(ax3.lines) > 0:
                 line = ax3.lines[0]
                 line.remove()
-            for i in range(self.xy_values_k0.shape[0]):
-                ax3.plot(self.xy_values_k0[i, 0], self.xy_values_k0[i, 1], 'c')
+            x_start, x_end = self.xy_values_k0[:, 0].T
+            y_start, y_end = self.xy_values_k0[:, 1].T
+            ax3.plot([x_start, x_end], [y_start, y_end], 'c')
             fig.canvas.draw_idle()
 
         # Connect the update function to the slider
@@ -1479,8 +1493,13 @@ def plot_steerable_filter_roi(roi_instances, ax):
     for i in range(len(roi_instances)):
         roi = roi_instances[i]
         xy_values = roi.xy_values_superclass
-        for i in range(xy_values.shape[0]):
-            ax.plot(xy_values[i, 0], xy_values[i, 1], 'blue')
+        x_values = xy_values[:, 0].reshape(-1, 2)
+        x_start, x_end = x_values.T
+        
+        y_values = xy_values[:, 1].reshape(-1, 2)
+        y_start, y_end = y_values.T
+        
+        ax.plot([x_start, x_end],[y_start, y_end], 'orange')
     return ax
             
 class ROI(ImageAnalysis):
@@ -1594,23 +1613,33 @@ class ROI(ImageAnalysis):
         self.y_borders = [min_y_area, max_y_area]
         self.nX = max_x_area - min_x_area
         self.nY = max_y_area - min_y_area
-        
-        if min_x_area < self.image_analysis.pad_angle_left*self.image_analysis.roi_size:
-            self.pad_angle_left = self.image_analysis.pad_angle_left
-        else:
-            self.pad_angle_left = self.pad_angle
-        if min_y_area < self.image_analysis.pad_angle_top*self.image_analysis.roi_size:
-            self.pad_angle_top = self.image_analysis.pad_angle_top
-        else:
-            self.pad_angle_top = self.pad_angle
-        if max_x_area > (self.image_analysis.nX - self.image_analysis.pad_angle_right*self.image_analysis.roi_size):
-            self.pad_angle_right = self.image_analysis.pad_angle_right
-        else:
-            self.pad_angle_right = self.pad_angle
-        if max_y_area > (self.image_analysis.nY - self.image_analysis.pad_angle_bottom*self.image_analysis.roi_size):
-            self.pad_angle_bottom = self.image_analysis.pad_angle_bottom
-        else:
-            self.pad_angle_bottom = self.pad_angle
+        if self.roi_size != 0:
+            roi_factor = self.image_analysis.roi_size / self.roi_size
+            
+            if min_x_area < self.image_analysis.pad_angle_left*self.image_analysis.roi_size:
+                diff = self.image_analysis.pad_angle_left*self.image_analysis.roi_size - min_x_area
+                self.pad_angle_left = int(np.floor(diff / self.roi_size))
+            else:
+                self.pad_angle_left = self.pad_angle
+                
+            if max_x_area > (self.image_analysis.nX - self.image_analysis.pad_angle_right*self.image_analysis.roi_size):
+                diff = max_x_area - (self.image_analysis.nX - self.image_analysis.pad_angle_right*self.image_analysis.roi_size)
+                self.pad_angle_right = int(np.floor(diff / self.roi_size))
+            else:
+                self.pad_angle_right = self.pad_angle
+                
+            if max_y_area > (self.image_analysis.nY - self.image_analysis.pad_angle_bottom*self.image_analysis.roi_size):
+                diff = max_y_area - (self.image_analysis.nY - self.image_analysis.pad_angle_bottom*self.image_analysis.roi_size)
+                self.pad_angle_bottom = int(np.floor(diff / self.roi_size))
+            else:
+                self.pad_angle_bottom = self.pad_angle
+                
+            if min_y_area < self.image_analysis.pad_angle_top*self.image_analysis.roi_size:
+                diff = self.image_analysis.pad_angle_top*self.image_analysis.roi_size - min_y_area
+                self.pad_angle_top = int(np.floor(diff / self.roi_size))
+            else:
+                self.pad_angle_top = self.pad_angle
+
         
             
     def set_superclass(self, image_analysis):
@@ -1687,42 +1716,18 @@ class ROI(ImageAnalysis):
         anglemap = anglemap[self.ny0:self.ny1, self.nx0:self.nx1]
         
         # Get only non-zero angles
-        
         anglemap_nonzero = anglemap[anglemap!=0]
-        print(np.mean(anglemap_nonzero))
-        # Your data
-        data = anglemap_nonzero.flatten().reshape(-1, 1)  # Flatten the 2D array
-
-        '''# Calculate WCSS for different numbers of clusters
-        wcss = []
-        for i in range(1, 11):  # start range from 2
-            kmeans = KMeans(n_clusters=i, init='k-means++', max_iter=300, n_init=10, random_state=0)
-            kmeans.fit(data)
-            wcss.append(kmeans.inertia_)
-
-        # Calculate the coordinates of the line connecting the first and last points
-        x1, y1 = 2, wcss[0]  # start from 2
-        x2, y2 = 10, wcss[-1]
-        distances = []
-        for i in range(len(wcss)):
-            x0 = i+1  # start from 2
-            y0 = wcss[i]
-            numerator = abs((y2-y1)*x0 - (x2-x1)*y0 + x2*y1 - y2*x1)
-            denominator = np.sqrt((y2 - y1)**2 + (x2 - x1)**2)
-            distances.append(numerator/denominator)
-
-        # The optimal number of clusters is the one that corresponds to the maximum distance
-        optimal_clusters = distances.index(max(distances)) + 2  # +2 because range starts at 2
-        
-        # Fit the KMeans algorithm to the data
-        '''
-        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster(anglemap_nonzero, n_clusters=3, print_=True)
+        #np.savetxt('comparison/anglemap_test.csv', anglemap_nonzero, delimiter=',')
+        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster(anglemap_nonzero, n_clusters=3, print_=True, min_diff=10)
         idx = np.argmax(cluster_percentage_arr)
         mean = cluster_mean_arr[idx]
         std = cluster_std_arr[idx]
         min_angle = mean - 2*std
         max_angle = mean + 2*std
+        if self.nAngles < 2 * int(np.floor(max_angle - min_angle)):
+            self.nAngles = 2 * int(np.floor(max_angle - min_angle))
         angle_array = np.linspace(min_angle, max_angle, self.nAngles, endpoint=True)
+        print(f'applying steerable filter with {self.nAngles} angles between {round(min_angle, 2)} and {round(max_angle, 2)} degrees')
         angle_array = angle_array * np.pi / 180
         
         self.__apply_steerable_filter(angle_array)
@@ -1730,35 +1735,9 @@ class ROI(ImageAnalysis):
  
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
         
-    
-def find_cluster(data, n_clusters=2, print_=True):
-    """
-    Find Clusters in an array, determine the range (2*std) of the cluster with the highest percentage of data points and return an array of angles in this range.
-    
-    Parameter:
-        - data (ndarray): The array to find clusters in.
-        - n_clusters (int): The number of clusters to find.
-        - print_ (boolean): If True, print the Parameter of each cluster.
-    Returns:
-        - cluster_data_arr (2darray): The data points in each cluster.
-        - cluster_min_arr (1darray): The minimum of each cluster.
-        - cluster_max_arr (1darray): The maximum of each cluster.
-        - cluster_mean_arr (1darray): The mean of each cluster.
-        - cluster_diff_arr (1darray): The difference between the maximum and minimum of each cluster.
-        - cluster_percentage_arr (1darray): The percentage of data points in each cluster.
-        - cluster_std_arr (1darray): The standard deviation of each cluster.
-    """
-    
-    # Flatten the 2D array
-    data = data.flatten().reshape(-1, 1)
-    # Fit the KMeans algorithm to the data
-    kmeans = KMeans(n_clusters=n_clusters, init='k-means++', max_iter=300, n_init=10, random_state=0)
-    kmeans.fit(data)
-
-    # Count the number of elements in each cluster
-    cluster_counts = Counter(kmeans.labels_)
-
-    # Calculate the total number of data points
+def get_cluster_parameter(data, labels, print_=False):
+    cluster_counts = Counter(labels)
+    n_clusters = len(cluster_counts)
     total_data_points = len(data)
     cluster_data_arr = pd.DataFrame()
     cluster_min_arr = np.zeros(n_clusters)
@@ -1768,11 +1747,9 @@ def find_cluster(data, n_clusters=2, print_=True):
     cluster_percentage_arr = np.zeros(n_clusters)
     cluster_std_arr = np.zeros(n_clusters)
     
-    # Iterate over the clusters
     for i, cluster in enumerate(cluster_counts):
         # Get the data points in the cluster
-        # Get the data points in the cluster
-        cluster_data = pd.DataFrame({i: data[kmeans.labels_ == cluster].flatten()})
+        cluster_data = pd.DataFrame({i: data[labels == cluster].flatten()})
         if cluster_data_arr.empty:
             cluster_data_arr = cluster_data
         else:
@@ -1788,17 +1765,73 @@ def find_cluster(data, n_clusters=2, print_=True):
         # calc standard deviation
         cluster_std_arr[i] = np.nanstd(cluster_data)
         
-        
         # Calculate the difference between the maximum and minimum
         cluster_diff_arr[i] = cluster_max_arr[i] - cluster_min_arr[i]
-        if print_:
+        # Iterate over the clusters
+    if print_:
+        for i, cluster in enumerate(cluster_counts):
             print('Cluster:', cluster)
-            print('Mean:', cluster_mean_arr[i])
+            print('Mean:', round(cluster_mean_arr[i], 2))
             print('Min:', cluster_min_arr[i])
             print('Max:', cluster_max_arr[i])
             print('Difference between max and min:', cluster_diff_arr[i])
             print('Percentage:', cluster_percentage_arr[i], '%\n')
+        print('--------------------------------------')
     return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
+    
+    
+def find_cluster(data, n_clusters, print_=False, min_diff=0):
+    """
+    Find Clusters in an array, determine the range (2*std) of the cluster with the highest percentage of data points and return an array of angles in this range.
+    
+    Parameter:
+        - data (ndarray): The array to find clusters in.
+        - n_clusters (int): The number of clusters to find.
+        - print_ (boolean): If True, print the Parameter of each cluster.
+        - min_diff (float): The minimum difference between the means of two clusters. If the difference is smaller than this value, the number of clusters is reduced by one.
+    Returns:
+        - cluster_data_arr (2darray): The data points in each cluster.
+        - cluster_min_arr (1darray): The minimum of each cluster.
+        - cluster_max_arr (1darray): The maximum of each cluster.
+        - cluster_mean_arr (1darray): The mean of each cluster.
+        - cluster_diff_arr (1darray): The difference between the maximum and minimum of each cluster.
+        - cluster_percentage_arr (1darray): The percentage of data points in each cluster.
+        - cluster_std_arr (1darray): The standard deviation of each cluster.
+    """
+    
+    # Flatten the 2D array
+    data = data.flatten().reshape(-1, 1)
+    
+    # Fit the KMeans algorithm to the data
+    kmeans = KMeans(n_clusters=n_clusters, init='k-means++', max_iter=300, n_init=10, random_state=0)
+    kmeans.fit(data)
+
+    # Count the number of elements in each cluster
+    labels = kmeans.labels_
+    cluster_counts = Counter(labels)
+    
+ 
+    # get cluster parameter
+    cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr = get_cluster_parameter(data, labels, print_=True)
+
+    if min_diff > 0:
+        # Calculate the absolute difference between each mean and all other means
+        diff_matrix = np.abs(cluster_mean_arr[:, None] - cluster_mean_arr)
+
+        # Get the upper triangle of the matrix excluding the diagonal
+        
+        diff_matrix = np.triu(diff_matrix, k=1)
+        diff_matrix[np.tril_indices(diff_matrix.shape[0])] = np.nan
+        close_clusters = np.argwhere(diff_matrix < min_diff)
+        
+        if n_clusters > 1 and len(close_clusters) > 0:
+            if print_:
+                print(f'clusters are too close together, reducing number of clusters from {n_clusters} to {n_clusters-1}')
+            find_cluster(data, n_clusters-1, print_=print_, min_diff=min_diff)
+        else:
+            return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
+    return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
+
         
 class ROISelector:
     """
@@ -1828,6 +1861,8 @@ class ROISelector:
 
         # Display the image
         self.ax.imshow(self.raw, extent=[0, self.raw.shape[1], self.raw.shape[0], 0])
+        self.ax.set_xlim(0, self.raw.shape[1])
+        self.ax.set_ylim(self.raw.shape[0], 0)
 
         # Create a button for removing the last ROI
         self.remove_roi_button_axis = plt.axes([0.8, 0.05, 0.1, 0.075])
@@ -2080,8 +2115,20 @@ def interactive_image_analysis():
     print('Calculating the cross correlation:')
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.calc_fourier_peaks()
     image_analysis.plot_top_x_roi()
+    save = True
+    if save:
+        #embed()
+        if len(image_analysis.roi_instances) > 0:
+            lags = np.concatenate([roi.lags[roi.ind] for roi in image_analysis.roi_instances])
+            ccf_all = np.concatenate([roi.ccf_all[:,roi.ind] for roi in image_analysis.roi_instances])
+            ccf_mask = np.concatenate([roi.ccf_mask for roi in image_analysis.roi_instances])
+            ccf_fit_valid = np.concatenate([roi.ccf_fit_valid for roi in image_analysis.roi_instances])
+        
+        np.savetxt('comparison/lags.csv', lags, delimiter=',')
+        np.savetxt('comparison/ccf_all.csv', ccf_all, delimiter=',')
+        np.savetxt('comparison/ccf_mask.csv', ccf_mask, delimiter=',')
+        np.savetxt('comparison/ccf_fit_valid.csv', ccf_fit_valid, delimiter=',')
     
     #embed()
     
@@ -2102,7 +2149,7 @@ def non_interactive():
     
     # get image factor
     factor = raw_info['XResolution'].value[0]  # The Xresolution tag is a ratio, so we take the numerator
-    pixSize = 1 / factor *10**(6) # Factor to go from pixels to micrometers
+    pixSize = 1 / factor * 10**(6) # Factor to go from pixels to micrometers
     
     image_analysis.set_mask_image(raw, pixSize)
     image1 = np.asarray(tif.pages[4*slice_index + substrate1_channel].asarray())
@@ -2115,10 +2162,15 @@ def non_interactive():
     image_analysis.apply_steerable_filter()
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.calc_fourier_peaks()
     image_analysis.plot_top_x_roi()
+    save = False
+    if save:
+        
+        np.savetxt('comparison/lags.csv', image_analysis.lags[image_analysis.ind], delimiter=',')
+        np.savetxt('comparison/ccf_all.csv', image_analysis.ccf_all[:,image_analysis.ind], delimiter=',')
+        np.savetxt('comparison/ccf_mask.csv', image_analysis.ccf_mask, delimiter=',')
+        np.savetxt('comparison/ccf_fit_valid.csv', image_analysis.ccf_fit_valid, delimiter=',')
     #embed()
-
 
 def main():
     

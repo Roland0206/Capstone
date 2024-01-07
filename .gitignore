@@ -7,4 +7,5 @@
 **/steerable/matlab/**
 .venv/
 **/*.csv
+**/*.png
 
