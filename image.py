@@ -40,10 +40,18 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 # for fitting curves to data
 from scipy.optimize import curve_fit
 from scipy.fftpack import fft
-from scipy.signal import argrelextrema
+from scipy.signal import argrelextrema, find_peaks
 
 # For resizing images
 from skimage.transform import resize  
+from skimage import measure
+
+
+# for detecting nuclei
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+from stardist.models import StarDist2D
+
+from csbdeep.utils import normalize
 
 # KMeans clustering algorithm
 from sklearn.cluster import KMeans  
@@ -55,7 +63,11 @@ from spectrum.correlation import xcorr
 import steerable  
 
 # For reading and writing TIFF files
-from tifffile import TiffFile  
+from tifffile import TiffFile
+
+
+
+
 
 def sine_func(x, offs, amp, f, phi):
     """
@@ -117,114 +129,98 @@ def sine_fit(x, y, guess=None, plot=False, tol=0.00025):
     
     return popt, pcov, mse
 
-def calculate_diff(y, idx1, idx2, idx3, idx4, factor):
+def crop_around_extrema(x, y, prominence, factor, plot=False):
     
-    # find central two extrema
-    extrem_2 = y[idx2]
-    extrem_3 = y[idx3]
-    diff_max = np.abs(extrem_2-extrem_3)
-    
-    # exclude datapoints
-    y_tmp = y.copy()
-    if extrem_2 > extrem_3:
-        y_tmp[y_tmp > extrem_2] = np.nan
-        y_tmp[y_tmp < extrem_3] = np.nan
-    else:
-        y_tmp[y_tmp > extrem_3] = np.nan
-        y_tmp[y_tmp < extrem_2] = np.nan
-    
-    # find closest nan to the left of idx2
-    try:
-        idx1 = np.argwhere(np.isnan(y_tmp[:idx2]))[-1][0] + 1
-    except IndexError:
-        idx1 += 0 
-           
-    # find closest nan to the right of idx3 until idx4
-    try:
-        idx4 = np.argwhere(np.isnan(y_tmp[idx3:idx4]))[0][0] + idx3 - 1
-    except IndexError:
-        idx4 += 0
-        
-    diff_left = np.abs(y_tmp[idx1]-y_tmp[idx2])
-    diff_right = np.abs(y_tmp[idx3]-y_tmp[idx4])
-    diff = max(diff_left, diff_right) * factor
-    
-    if extrem_2 > extrem_3:
-        start = idx1 + np.argmin(np.abs(y_tmp[idx1:idx2+1] - (extrem_2 - diff)))
-        end = idx3 + np.argmin(np.abs(y_tmp[idx3:idx4+1] - (extrem_3 + diff)))
-    else:
-        start = idx1 + np.argmin(np.abs(y_tmp[idx1:idx2+1] - (extrem_2 + diff)))
-        end = idx3 + np.argmin(np.abs(y_tmp[idx3:idx4+1] - (extrem_3 - diff)))
-    return start, end, diff, [idx2, idx3]
+    # Find the indices of the minima and maxima in the dataset
+    min_peak_idx, _ = find_peaks(-y, prominence=prominence)
+    max_peak_idx, _ = find_peaks(y, prominence=prominence)
 
-def crop_first_two_extrema(x, y, factor=1/10, plot=False):
-    """
-    This function crops the signal between the first two extrema.
-    
-    Parameter:
-        - x (list): The x-coordinates of the signal.
-        - y (list): The y-coordinates of the signal.
-        - plot (bool): Whether to plot the signal and the cropped region.
+    # Raise an error if no prominent local extrema are found
+    if len(min_peak_idx) == 0 or len(max_peak_idx) == 0:
+        raise ValueError(f'no prominent local extrema for prominence {prominence} found')
 
-    Returns:
-        - x_crop (list): The x-coordinates of the cropped signal.
-        - y_crop (list): The y-coordinates of the cropped signal.
-        - start (int): The start index of the cropped region.
-        - end (int): The end index of the cropped region.
-    """
-    # find local maxima
-    max_idx = argrelextrema(y, np.greater)[0]
-    
-    # check if no local maxima
-    if len(max_idx) == 0:
-        print('no local maxima')
-        return None, None, None, None
-    
-    # find local minima
-    min_angledx = argrelextrema(y, np.less)[0]
-    
-    # check if no local minima
-    if len(min_angledx) == 0:
-        print('no local minima')
-        return None, None, None, None
-    
-    # exclude saddle points
-    max_idx = max_idx[(y[max_idx] > np.roll(y, 1)[max_idx]) & (y[max_idx] > np.roll(y, -1)[max_idx])]
-    min_angledx = min_angledx[(y[min_angledx] < np.roll(y, 1)[min_angledx]) & (y[min_angledx] < np.roll(y, -1)[min_angledx])]
-    
-    # get list of all extrema
-    extrema_idx = np.concatenate(([0], max_idx, min_angledx))
-    
-    # remove duplicates
-    extrema_idx = np.unique(extrema_idx)
-    
-    # sort extrema
-    extrema_idx = np.sort(extrema_idx)
-    
-    valid = True
-    while valid:
-        if len(extrema_idx) >= 4:
-            idx1, idx2, idx3, idx4 = extrema_idx[:4]
-            if idx3-idx2 < 3:
-                extrema_idx = extrema_idx[1:]
-                continue
-            else:
-                start, end, diff, idx = calculate_diff(y, idx1, idx2, idx3, idx4, factor)
-                valid = False
-        if len(extrema_idx) == 3:
-            idx1, idx2, idx3 = extrema_idx
-            idx4 = len(y)-1
-            start, end, diff, idx = calculate_diff(y, idx1, idx2, idx3, idx4, factor)
-            valid = False
+
+    # Filter out maxima that occur before the first minimum
+    max_peak_idx = max_peak_idx[max_peak_idx > min_peak_idx[0]] 
+
+    # Initialize indices and values
+    idx_1, idx_2, idx_3 = None, None, None
+    val_1, val_2, val_3 = None, None, None
+
+    # If there's only one minimum, set the indices and values accordingly
+    if len(min_peak_idx) == 1:
+        idx_1, idx_2 = min_peak_idx[0], max_peak_idx[0]
+        val_1, val_2 = y[idx_1], y[idx_2]
+        y_min = val_1    
+        # determine new "maximum" position based on distance to the first minimum
+        norm_tmp = np.linalg.norm([x[idx_2]-x[idx_1], val_2-val_1])            
+        norm_right_tmp = [np.linalg.norm([x[idx+idx_2]-x[idx_2], val-y[idx_2]]) for idx, val in enumerate(y[idx_2:])]
+        idx_3 = idx_2 + np.argmin(np.abs(np.array(norm_right_tmp)-norm_tmp))
+        val_3 = y[idx_3]   
+    else:
+        # If there's more than one minimum, set the indices and values accordingly
+        idx_1, idx_2, idx_3 = min_peak_idx[0], max_peak_idx[0], min_peak_idx[1]
+        val_1, val_2, val_3 = y[idx_1], y[idx_2], y[idx_3]
         
-    y_crop = y[start:end+1]
-    x_crop = x[start:end+1]
+    # If the distance between the second minimum and maximum is too large, ignore the second minimum
+    if x[idx_3] - x[idx_2] > 1.5 * (x[idx_2] - x[idx_1]):
+        y_min = val_1
+        
+        # determine new "maximum" position based on distance to the first minimum
+        norm_tmp = np.linalg.norm([x[idx_2]-x[idx_1], val_2-val_1])            
+        norm_right_tmp = [np.linalg.norm([x[idx_2+ idx]-x[idx_2], val-y[idx_2]]) for idx, val in enumerate(y[idx_2:])]
+        idx_3 = idx_2 + np.argmin(np.abs(np.array(norm_right_tmp)-norm_tmp))
+        val_3 = y[idx_3]
+        
+    # If the distance between the first minimum and maximum is too large, ignore the first minimum
+    elif x[idx_2] - x[idx_1] > 1.5 * (x[idx_3] - x[idx_2]):
+        idx_1, val_1 = None, None
+        y_min = val_3
+        
+        # determine new "minimum" position based on distance to the first maximum
+        norm_tmp = np.linalg.norm([x[idx_2]-x[idx_3], val_2-val_3])
+        norm_left_tmp = [np.linalg.norm([x[idx]-x[idx_2], val-y[idx_2]]) for idx, val in enumerate(y[:idx_2+1])]
+        idx_1 = np.argmin(np.abs(np.array(norm_left_tmp)-norm_tmp))
+        val_1 = y[idx_1]
+    y_min = min(val_1, val_3)
+
+    # Set the maximum value
+    y_max = val_2
+
+    # Calculate the difference between the maximum and minimum values
+    diff = np.abs(y_max - y_min)
+
+    # Calculate the norm
+    norm_idx = idx_1 + np.argmin(np.abs(y[idx_1:idx_2] - (val_1 + diff * factor)))
+    norm = np.linalg.norm([x[norm_idx]-x[idx_1], y[norm_idx]-y[idx_1]])
+
+    # Calculate the norms for the left and right sides
+    y_norm_left = np.array([np.linalg.norm([x[idx]-x[idx_1], val-y[idx_1]])-norm for idx, val in enumerate(y[:idx_1+1])])
+    #y_norm_left[y[:idx_1] > y_max] = np.nan
+    #y_norm_left[y[:idx_1] < val_1] = np.nan
+    y_norm_right = np.array([np.linalg.norm([x[idx_3 + idx]-x[idx_3], val-y[idx_3]])-norm for idx, val in enumerate(y[idx_3:])])
+    #y_norm_right[y[idx_3:] > y_max] = np.nan
+    #y_norm_right[y[idx_3:] < val_3] = np.nan
+    
+    # Find the start and end indices
+    try:
+        start_idx = np.nanargmin(np.abs(y_norm_left))
+        end_idx = np.nanargmin(np.abs(y_norm_right)) + idx_3
+    except ValueError:
+        start_idx = idx_1
+        end_idx = idx_3
+
     if plot:
-        fig, ax = plt.subplots()
-        ax.plot(x, y, 'o', color='b', label='data')
-        plt.vlines(x[start], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
-        plt.vlines(x[end], ymin=np.min(y), ymax=np.max(y), color='r', ls='--')
-    return x_crop, y_crop, [start, end], idx
+        fig, ax = plt.subplots(1, 1, figsize=(15, 5))
+        ax.plot(x, y, 'o')
+        ax.plot(x[min_peak_idx], y[min_peak_idx], 'o', color='r')
+        ax.plot(x[max_peak_idx], y[max_peak_idx], 'o', color='g')
+        ax.plot([x[idx_1], x[idx_2]], [y[idx_1], y[idx_2]], 'o', color='m')
+        ax.plot(x[idx_3], y[idx_3], 'o', color='m')
+        ax.vlines(x[start_idx], ymin=min(y), ymax=max(y), colors='k', linestyles='dashed')
+        ax.vlines(x[end_idx], ymin=min(y), ymax=max(y), colors='k', linestyles='dashed')
+        return start_idx, end_idx, diff, ax
+    return start_idx, end_idx, diff, None
 
 def plot_fourier_peaks(omega_valid, amplitude_valid):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 10))
@@ -329,7 +325,7 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     else:
         plt.show()
 
-def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thresh, gblur_sigma, roi_instances=[], fig=None):
+def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thresh, gblur_sigma, roi_instances=[],nuclei_mask=None, fig=None):
     """
     Plots the mask and ROIMask images.
 
@@ -351,12 +347,21 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
         fig = plt.figure()
         return_fig = False
     ax1 = fig.add_subplot(1, 2, 1)
-    ax1.set_title(fr'mask (thresh. = {mask_thresh}), $\sigma_{{gb}}$ = {gblur_sigma})')
     ax2 = fig.add_subplot(1, 2, 2)
+    ax1.set_title(fr'Raw Mask (thresh. = {mask_thresh}), $\sigma_{{gb}}$ = {gblur_sigma})')
+    
     ax2.set_title(f'ROIMask (size = {roi_size}, thresh. = {roi_thresh})')
 
     pic1 = ax1.imshow(raw_mask, cmap='gray')
+  
     pic2 = ax2.imshow(raw_roi_mask, cmap='gray')
+    if nuclei_mask is not None:
+        contours = measure.find_contours(nuclei_mask, 0.8)
+
+        # Plot the contours in red
+        for contour in contours:
+            ax1.plot(contour[:, 1], contour[:, 0], linewidth=1, color='r')
+
     if len(roi_instances) > 0:
         for i in range(len(roi_instances)):
             roi = roi_instances[i]
@@ -759,6 +764,19 @@ class ImageAnalysis:
             
             # apply the steerable filter to the ROI (to the cropped images of the superclass)
             self.roi_instances[i].apply_steerable_filter_finetuning()
+            
+    def substract_nuclei_background(self):
+        if hasattr(self, 'raw_mask'):
+            if hasattr(self, 'nuclei_mask'):
+                self.nuclei_mask_crop = self.nuclei_mask[:self.raw_mask.shape[0], :self.raw_mask.shape[1]]
+                self.raw_mask[self.nuclei_mask_crop == 1] = 0
+            elif hasattr(self, 'raw_nuclei'):
+                # creates a pretrained model to detect nuclei
+                model = StarDist2D.from_pretrained('2D_versatile_fluo')
+                labels, details = model.predict_instances(normalize(self.raw_nuclei))
+                self.nuclei_mask = (labels > 0).astype(int)
+                self.substract_nuclei_background()
+            
     
     def mask_background(self):
         """
@@ -785,6 +803,7 @@ class ImageAnalysis:
 
         # applying a Gaussian blur
         self.raw_bgsub = gaussian_filter(self.raw_crop, sigma=self.gblur_sigma)
+        
 
         # Copy the background-subtracted image to create a mask
         self.raw_mask = self.raw_bgsub.copy()
@@ -806,8 +825,8 @@ class ImageAnalysis:
         else:
             # If no ROIs are defined, create a binary mask based on the threshold
             self.raw_mask = (self.raw_mask >= self.mask_thresh).astype(int)
-            
         # Create a mask of the ROIs based on the percentage of white pixels in each ROI
+        self.substract_nuclei_background()
         self.create_roi_mask()
 
         
@@ -1006,6 +1025,18 @@ class ImageAnalysis:
         """
         self.raw2 = raw_substrate2
         
+    def set_nuclei_image(self, raw_nuclei):
+        """
+        Set image of nuclei background.
+
+        Parameter:
+            - raw_nuclei: The raw nuclei image.
+
+        Returns:
+            - None
+        """
+        self.raw_nuclei = raw_nuclei
+        
     def calc_all_ccf(self, plot=True):
         """
         Calculate the cross-correlation between two images for this instance and in all instances of subclass ROI. The cross-correlation is calculated for each ROI and the detected structures in it.
@@ -1147,42 +1178,64 @@ class ImageAnalysis:
     def calc_fourier_peak_one_ccf(self, i):
         ccf = self.ccf_all[i, self.ind] # y
         lags = self.lags[self.ind] # x
-        
+        if i==914:
+            t=5
         # crop ccf around the first minima and maxima
-        lags_crop, ccf_crop, _, _ = crop_first_two_extrema(lags, ccf, factor=1/10)
+        percent = 80
+        factor = 1/10
+        invalid_fit = True
+        while invalid_fit and factor < 1/2:
+            invalid_crop = True
+            lags_crop = None
+            while invalid_crop and percent > 50:
+                try:  
+                    prominence = np.percentile(ccf, percent)
+                    start_idx, end_idx, diff, _= crop_around_extrema(lags, ccf, prominence, factor)
+                    lags_crop = lags[start_idx:end_idx]
+                    ccf_crop = ccf[start_idx:end_idx]
+                    invalid_crop = False
+                except Exception as e:
+                    print(f"An error occurred during cropping for {i}th ccf: ", e)
+                    percent -= 5
+                    invalid_crop = True
+                    
         
-       
-        if lags_crop is None:
-            return None, None, None
-        
-        try:
-            guess = None
-            try:
-                # Estimate frequency using FFT
-                N = len(ccf_crop)
-                f = np.linspace(0, 1, N)  # Frequency range
-                yf = fft(ccf_crop)
-                estimate_f = f[np.argmax(np.abs(yf[1:N//2]))] 
-                
-                # Initial guess for the Parameter
-                guess = [np.mean(ccf_crop), np.std(ccf_crop), estimate_f, 0]
-            except Exception as er:
-                print(f"An error occurred during FFT for {i}th ccf: ", er)
-            popt, pcov, mse = sine_fit(lags_crop, ccf_crop, guess)
-            if np.abs(popt[1])>1.5*np.abs(max(ccf_crop)-min(ccf_crop))/2:
-                print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
+            if lags_crop is None:
                 return None, None, None
-            return popt, pcov, mse
-        
-        except Exception as e:
-            print(f"An error occurred during sine fitting for {i}th ccf: ", e)
-            #fig, ax = plt.subplots(figsize=(12, 10))
-            #ax.plot(lags, ccf,'o', color='#cccaca')
-            #ax.vlines(lags_crop[0], min(ccf), max(ccf), color='red')
-            #ax.vlines(lags_crop[-1], min(ccf), max(ccf), color='red')
-            #plt.show()
+            
+            try:
+                guess = None
+                try:
+                    # Estimate frequency using FFT
+                    N = len(ccf_crop)
+                    f = np.linspace(0, 1, N)  # Frequency range
+                    yf = fft(ccf_crop)
+                    estimate_f = f[np.argmax(np.abs(yf[1:N//2]))] 
+                    
+                    # Initial guess for the Parameter
+                    guess = [np.mean(ccf_crop), np.std(ccf_crop), estimate_f, 0]
+                except Exception as er:
+                    print(f"An error occurred during FFT for {i}th ccf: ", er)
+                    
+                popt, pcov, mse = sine_fit(lags_crop, ccf_crop, guess)
+                
+                if np.abs(popt[1])>1.5*np.abs(max(ccf_crop)-min(ccf_crop))/2:
+                    print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
+                    factor += 1/10
+                else:
+                    invalid_fit = False
+            
+            except Exception as e:
+                invalid_fit = False
+                print(f"An error occurred during sine fitting for {i}th ccf: ", e)
+                #fig, ax = plt.subplots(figsize=(12, 10))
+                #ax.plot(lags, ccf,'o', color='#cccaca')
+                #ax.vlines(lags_crop[0], min(ccf), max(ccf), color='red')
+                #ax.vlines(lags_crop[-1], min(ccf), max(ccf), color='red')
+                #plt.show()
+                return None, None, None
 
-            return None, None, None
+        return popt, pcov, mse
         
     def calc_fourier_peaks(self, plot=False):
         if len(self.roi_instances)==0:
@@ -1388,7 +1441,11 @@ class ImageAnalysis:
 
         # Generate the mask and ROI mask images
         self.mask_background()
-        mask_display, roi_mask_display, ax1, ax2 = plot_mask_background(self.raw_mask, self.raw_roi_mask, self.mask_thresh, self.roi_size, self.roi_thresh, self.gblur_sigma, self.roi_instances, fig)
+        if hasattr(self, 'nuclei_mask'):
+            param = [self.raw_mask, self.raw_roi_mask, self.mask_thresh, self.roi_size, self.roi_thresh, self.gblur_sigma, self.roi_instances, self.nuclei_mask, fig]
+        else:
+            param = [self.raw_mask, self.raw_roi_mask, self.mask_thresh, self.roi_size, self.roi_thresh, self.gblur_sigma, self.roi_instances,None, fig]
+        mask_display, roi_mask_display, ax1, ax2 = plot_mask_background(*param)
 
         # Define a function to update the images whenever a slider value changes
         def update_image(val, param):
@@ -1681,6 +1738,8 @@ class ROI(ImageAnalysis):
                 self.raw2 = self.image_analysis.raw2[self.y_borders[0]:self.y_borders[1], self.x_borders[0]:self.x_borders[1]]
             if len(self.image_analysis.raw2_tophat)>0:
                 self.raw2_tophat = self.image_analysis.raw2_tophat[self.y_borders[0]:self.y_borders[1], self.x_borders[0]:self.x_borders[1]]
+            if hasattr(self.image_analysis, 'raw_nuclei'):
+                self.raw_nuclei = self.image_analysis.raw_nuclei[self.y_borders[0]:self.y_borders[1], self.x_borders[0]:self.x_borders[1]]
         
     def set_roi_size(self, roi_size):
         """
@@ -1976,17 +2035,15 @@ def choose_image_interactive(n_channels=4):
     fly2_name = '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif'
     human_name = 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif'
     print(f"You chose: {chosen_image}")
-    
     if chosen_image == fly1_name or chosen_image == fly2_name:
         tmp = '''You chose a image of fly muscle.\n \t- slice 0: alpha-actinin\n\t- slice 1: actin\n\t- slice 2: myosin\n\t- slice 3: sallimus (mask channel)'''
         print(tmp)
         mask_channel = 3
-        substrate1_channel = 0
-        substrate2_channel = 3
     if chosen_image == human_name:
         tmp = '''You chose a image of human muscle.\n \t- slice 0: titin N-terminus (mask channel\n\t- slice 1: muscle myosin\n\t- slice 2: nuclei\n\t- slice 3: actin'''
         print(tmp)
         mask_channel = 0
+        
 
     path = os.path.join(image_dir, chosen_image)
     
@@ -2010,6 +2067,16 @@ def choose_image_interactive(n_channels=4):
                     print('Invalid channel index. Please try again.')
                 else:
                     valid = False
+        tmp = input(f'Set channel of image with nuclei? (y/N)')
+        if tmp == 'y' or tmp == 'Y':
+            if change and 'nuclei_channel' not in locals():
+                valid = True
+                while valid:
+                    nuclei_channel = int(input('Enter the index for the channel of image with nuclei: '))
+                    if nuclei_channel > n_channels-1 or nuclei_channel < 0:
+                        print('Invalid channel index. Please try again.')
+                    else:
+                        valid = False
         if change and 'substrate1_channel' not in locals():
             valid = True
             while valid:
@@ -2029,7 +2096,13 @@ def choose_image_interactive(n_channels=4):
         mask_image = np.asarray(tif.pages[n_channels*slice_index+mask_channel].asarray())
         sub1_image = np.asarray(tif.pages[n_channels*slice_index+substrate1_channel].asarray())
         sub2_image = np.asarray(tif.pages[n_channels*slice_index+substrate2_channel].asarray())
-        fig, ax = plt.subplots(1,3, figsize=(12, 4))
+        if 'nuclei_channel' in locals():
+            fig, ax = plt.subplots(1,4, figsize=(12, 4))
+            nuclei_image = np.asarray(tif.pages[n_channels*slice_index+nuclei_channel].asarray())
+            ax[3].imshow(nuclei_image, vmin=nuclei_image.min(), vmax=nuclei_image.max())
+            ax[3].set_title(f'nuclei image (channel {nuclei_channel})')
+        else:
+            fig, ax = plt.subplots(1,3, figsize=(12, 3))
         fig.suptitle(f'slice {slice_index}')
         ax[0].imshow(mask_image, vmin=mask_image.min(), vmax=mask_image.max())
         ax[0].set_title(f'mask image (channel {mask_channel})')
@@ -2037,20 +2110,24 @@ def choose_image_interactive(n_channels=4):
         ax[1].set_title(f'substrate 1 image (channel {substrate1_channel})')
         ax[2].imshow(sub2_image, vmin=sub2_image.min(), vmax=sub2_image.max())
         ax[2].set_title(f'substrate 2 image (channel {substrate2_channel})')
+        
         plt.show()
         
         proceed = input('Proceed? (Y/n)')
         if proceed == 'n' or proceed == 'N':
             change = True
-            del mask_channel, substrate1_channel, substrate2_channel
+            del mask_channel, substrate1_channel, substrate2_channel, nuclei_channel
         else:
             change = False
-    return tif, path, slice_index, mask_channel, substrate1_channel, substrate2_channel
+    if 'nuclei_channel' in locals():
+        return tif, path, slice_index, mask_channel, substrate1_channel, substrate2_channel, nuclei_channel
+    else:
+        return tif, path, slice_index, mask_channel, substrate1_channel, substrate2_channel, None
     
 
 def interactive_image_analysis():
     image_analysis = ImageAnalysis()
-    tif, path, slice_index, mask_channel, substrate1_channel, substrate2_channel = choose_image_interactive()
+    tif, path, slice_index, mask_channel, substrate1_channel, substrate2_channel, nuclei_channel = choose_image_interactive()
     raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
     raw_info = tif.pages[4*slice_index+mask_channel].tags
     
@@ -2063,6 +2140,9 @@ def interactive_image_analysis():
     image2 = np.asarray(tif.pages[4*slice_index + substrate2_channel].asarray())
     image_analysis.set_subtrate1_image(image1)
     image_analysis.set_substrate2_image(image2)
+    if nuclei_channel is not None:
+        nuclei_image = np.asarray(tif.pages[4*slice_index + nuclei_channel].asarray())
+        image_analysis.set_nuclei_image(nuclei_image)
     tmp = input(f'Configure rectangular regions of interest manually? (y/N)')
     if tmp == 'y' or tmp == 'Y':
         image_analysis.select_roi_manually()
@@ -2072,8 +2152,10 @@ def interactive_image_analysis():
     while change:
         tmp =f'''Current parameter for creation of mask and background substraction:\n\t- mask_thresh: {image_analysis.mask_thresh}\n\t- roi_thresh: {image_analysis.roi_thresh}\n\t- roi_size: {image_analysis.roi_size}\n\t- gblur_sigma: {image_analysis.gblur_sigma}'''
         print(tmp)
-        
-        param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances]
+        if nuclei_channel is not None:
+            param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances, image_analysis.nuclei_mask]
+        else:
+            param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances]
         plot_mask_background(*param)
         
         change = input('\n Change parameter? (y/N)')
@@ -2120,7 +2202,7 @@ def interactive_image_analysis():
     if save:
         #embed()
         if len(image_analysis.roi_instances) > 0:
-            lags = np.concatenate([roi.lags[roi.ind] for roi in image_analysis.roi_instances])
+            lags = image_analysis.roi_instances[0].lags[image_analysis.roi_instances[0].ind]
             ccf_all = np.concatenate([roi.ccf_all[:,roi.ind] for roi in image_analysis.roi_instances])
             ccf_mask = np.concatenate([roi.ccf_mask for roi in image_analysis.roi_instances])
             ccf_fit_valid = np.concatenate([roi.ccf_fit_valid for roi in image_analysis.roi_instances])
@@ -2138,15 +2220,15 @@ def interactive_image_analysis():
     #embed()
     
 def non_interactive():
-    path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
-    #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
+    path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
+    path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
     # load the image
     tif = TiffFile(path)
     n_slices = int(len(tif.pages)/4)
-    mask_channel = 3 #0 # 3
-    slice_index = 0 #9 # 0
-    substrate1_channel = 0
-    substrate2_channel = 3
+    mask_channel = 0#3#3 #0 # 3
+    slice_index = 9#0 #9 # 0
+    substrate1_channel = 0#3
+    substrate2_channel = 0#3
     
     image_analysis = ImageAnalysis()
     raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
@@ -2168,7 +2250,7 @@ def non_interactive():
     image_analysis.calc_all_ccf()
     #return image_analysis
     image_analysis.plot_top_x_roi()
-    save = False
+    save = True
     if save:
         
         np.savetxt('comparison/lags.csv', image_analysis.lags[image_analysis.ind], delimiter=',')
@@ -2180,8 +2262,8 @@ def non_interactive():
 def main():
     
     
-    interactive_image_analysis()
-    #non_interactive()
+    #interactive_image_analysis()
+    non_interactive()
 
     
  
