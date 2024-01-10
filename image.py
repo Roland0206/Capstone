@@ -172,8 +172,8 @@ def crop_around_extrema(x, y, prominence, factor, fig_ax=None):
         idx_3 = idx_2 + np.argmin(np.abs(np.array(norm_right_tmp)-norm_tmp))
         val_3 = y[idx_3]
         
-    # If the distance between the first minimum and maximum is too large, ignore the first minimum
-    elif x[idx_2] - x[idx_1] > 1.5 * (x[idx_3] - x[idx_2]):
+    # If the distance between the first minimum and the following maximum is too large, ignore the first minimum
+    elif x[idx_2] - x[idx_1] > 1.5 * (x[idx_3] - x[idx_2]) and idx_3 != len(x)-1:
         idx_1, val_1 = None, None
         y_min = val_3
         
@@ -219,8 +219,8 @@ def crop_around_extrema(x, y, prominence, factor, fig_ax=None):
         ax.plot(x[idx_3], y[idx_3], 'o', color='m')
         ax.vlines(x[start_idx], ymin=min(y), ymax=max(y), colors='k', linestyles='dashed')
         ax.vlines(x[end_idx], ymin=min(y), ymax=max(y), colors='k', linestyles='dashed')
-        return start_idx, end_idx, diff, (fig, ax)
-    return start_idx, end_idx, diff, None
+        return start_idx, end_idx, diff,[idx_1, idx_2, idx_3], (fig, ax)
+    return start_idx, end_idx, diff,[idx_1, idx_2, idx_3], None
 
 def plot_fourier_peaks(omega_valid, amplitude_valid):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 10))
@@ -900,7 +900,7 @@ class ImageAnalysis:
             - xy_values_k0: start xi and endposition yi of each detected sructure( xy_values_k0[t, 0] = xi, xy_values_k0[t, 1] = yi)
             - steerable_bool: Flag indicating that the steerable filter has been applied
         """
-        #TODO: maybe once for 180 angles, then clustering and only then measure again for the two/3 directions with highest percentage
+        
         # Resize the raw image and the mask to fit the number of ROIs
         raw_rsize = resize(self.raw, (self.nGridY, self.nGridX), order=0)  # order=0 --> nearest neighbor interpolation
         raw_rsize = raw_rsize.astype(np.float64)
@@ -1191,13 +1191,13 @@ class ImageAnalysis:
                 try:  
                     prominence = np.percentile(ccf, percent)
                     if not plot:
-                        start_idx, end_idx, diff, _= crop_around_extrema(lags, ccf, prominence, factor)
+                        start_idx, end_idx, diff, [idx_1, idx_2, idx_3],_= crop_around_extrema(lags, ccf, prominence, factor)
                     else:
                         if clear:
                             ax.clear()
                         else:
                             fig, ax = plt.subplots(figsize=(12, 10))
-                        start_idx, end_idx, diff, (fig, ax)= crop_around_extrema(lags, ccf, prominence, factor, (fig, ax))
+                        start_idx, end_idx, diff, [idx_1, idx_2, idx_3], (fig, ax)= crop_around_extrema(lags, ccf, prominence, factor, (fig, ax))
                     lags_crop = lags[start_idx:end_idx]
                     ccf_crop = ccf[start_idx:end_idx]
                     invalid_crop = False
@@ -1226,8 +1226,14 @@ class ImageAnalysis:
                     
                 popt, pcov, mse = sine_fit(lags_crop, ccf_crop, guess)
                 
-                if np.abs(popt[1])>1.5*np.abs(max(ccf_crop)-min(ccf_crop))/2:
-                    print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
+                if np.abs(popt[1])>1.3*diff/2:
+                    print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(diff/2, 2)})')
+                    factor += 1/10
+                    clear = True
+                    if factor > 1/2:
+                        return None, None, None
+                elif np.abs(1/(popt[2]))>1.5* (lags[idx_3]-lags[idx_1]):
+                    print(f"An error occurred during sine fitting for {i}th ccf: ", f'wavelength of fit is too large ({round(np.abs(1/popt[2]), 2)} >> {round(lags[idx_3]-lags[idx_1], 2)})')
                     factor += 1/10
                     clear = True
                     if factor > 1/2:
@@ -1838,6 +1844,7 @@ class ROI(ImageAnalysis):
         roi_mask_superclass = self.image_analysis.raw_roi_mask_array[self.i].copy()
         anglemap = self.image_analysis.anglemap.copy()
         anglemap[roi_mask_superclass == 0] = 0
+        # TODO: add check if steerable filter has already been applied
         
         self.create_roi_mask() 
         anglemap = anglemap[self.ny0:self.ny1, self.nx0:self.nx1]
