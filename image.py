@@ -129,7 +129,7 @@ def sine_fit(x, y, guess=None, plot=False, tol=0.00025):
     
     return popt, pcov, mse
 
-def crop_around_extrema(x, y, prominence, factor, plot=False):
+def crop_around_extrema(x, y, prominence, factor, fig_ax=None):
     
     # Find the indices of the minima and maxima in the dataset
     min_peak_idx, _ = find_peaks(-y, prominence=prominence)
@@ -210,8 +210,8 @@ def crop_around_extrema(x, y, prominence, factor, plot=False):
         start_idx = idx_1
         end_idx = idx_3
 
-    if plot:
-        fig, ax = plt.subplots(1, 1, figsize=(15, 5))
+    if fig_ax is not None:
+        fig, ax = fig_ax
         ax.plot(x, y, 'o')
         ax.plot(x[min_peak_idx], y[min_peak_idx], 'o', color='r')
         ax.plot(x[max_peak_idx], y[max_peak_idx], 'o', color='g')
@@ -219,7 +219,7 @@ def crop_around_extrema(x, y, prominence, factor, plot=False):
         ax.plot(x[idx_3], y[idx_3], 'o', color='m')
         ax.vlines(x[start_idx], ymin=min(y), ymax=max(y), colors='k', linestyles='dashed')
         ax.vlines(x[end_idx], ymin=min(y), ymax=max(y), colors='k', linestyles='dashed')
-        return start_idx, end_idx, diff, ax
+        return start_idx, end_idx, diff, (fig, ax)
     return start_idx, end_idx, diff, None
 
 def plot_fourier_peaks(omega_valid, amplitude_valid):
@@ -734,18 +734,16 @@ class ImageAnalysis:
         """
         return self.mask_thresh, self.roi_size, self.roi_thresh, self.gblur_sigma
     
-    def apply_steerable_filter(self, smaller_roi_size=None, apply_to_ROI=True):
+    def apply_steerable_filter(self, smaller_roi_size=None, plot_finetuning=True):
         """
         If the anglemap is empty, apply the steerable filter the instance of the class ImageAnalysis.
-        If apply_to_ROI is True: apply the steerable filter to each ROI (region of interest in self.raw) in self.roi_instances with a smaller ROI size (ROIs for mask creation)
+        If plot_finetuning is True: apply the steerable filter to each ROI (region of interest in self.raw) in self.roi_instances with a smaller ROI size (ROIs for mask creation)
         Parameter:
             - smaller_roi_size: The size of the ROIs for mask creation in the area of interests
         """
         
         if len(self.anglemap)==0 and smaller_roi_size is None:
             self.__apply_steerable_filter()
-            if not apply_to_ROI:
-                return
         if smaller_roi_size is None:
             smaller_roi_size = self.roi_size
             
@@ -763,7 +761,7 @@ class ImageAnalysis:
             #TODO: maybe also change other Parameter for mask creation?
             
             # apply the steerable filter to the ROI (to the cropped images of the superclass)
-            self.roi_instances[i].apply_steerable_filter_finetuning()
+            self.roi_instances[i].apply_steerable_filter_finetuning(plot=plot_finetuning)
             
     def substract_nuclei_background(self):
         if hasattr(self, 'raw_mask'):
@@ -828,6 +826,7 @@ class ImageAnalysis:
         # Create a mask of the ROIs based on the percentage of white pixels in each ROI
         self.substract_nuclei_background()
         self.create_roi_mask()
+    
 
         
     def create_roi_mask(self):
@@ -1175,22 +1174,30 @@ class ImageAnalysis:
         plt.savefig('ccf_human.png', dpi=300)
         plt.show()
     
-    def calc_fourier_peak_one_ccf(self, i):
+    def calc_fourier_peak_one_ccf(self, i, plot=False):
+        if not self.ccf_mask[i]:
+            return None, None, None
         ccf = self.ccf_all[i, self.ind] # y
         lags = self.lags[self.ind] # x
-        if i==914:
-            t=5
         # crop ccf around the first minima and maxima
         percent = 80
         factor = 1/10
         invalid_fit = True
-        while invalid_fit and factor < 1/2:
+        clear = False
+        while invalid_fit:
             invalid_crop = True
             lags_crop = None
             while invalid_crop and percent > 50:
                 try:  
                     prominence = np.percentile(ccf, percent)
-                    start_idx, end_idx, diff, _= crop_around_extrema(lags, ccf, prominence, factor)
+                    if not plot:
+                        start_idx, end_idx, diff, _= crop_around_extrema(lags, ccf, prominence, factor)
+                    else:
+                        if clear:
+                            ax.clear()
+                        else:
+                            fig, ax = plt.subplots(figsize=(12, 10))
+                        start_idx, end_idx, diff, (fig, ax)= crop_around_extrema(lags, ccf, prominence, factor, (fig, ax))
                     lags_crop = lags[start_idx:end_idx]
                     ccf_crop = ccf[start_idx:end_idx]
                     invalid_crop = False
@@ -1198,7 +1205,7 @@ class ImageAnalysis:
                     print(f"An error occurred during cropping for {i}th ccf: ", e)
                     percent -= 5
                     invalid_crop = True
-                    
+                    clear = True
         
             if lags_crop is None:
                 return None, None, None
@@ -1222,6 +1229,9 @@ class ImageAnalysis:
                 if np.abs(popt[1])>1.5*np.abs(max(ccf_crop)-min(ccf_crop))/2:
                     print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(np.abs(max(ccf_crop)-min(ccf_crop))/2, 2)})')
                     factor += 1/10
+                    clear = True
+                    if factor > 1/2:
+                        return None, None, None
                 else:
                     invalid_fit = False
             
@@ -1234,7 +1244,13 @@ class ImageAnalysis:
                 #ax.vlines(lags_crop[-1], min(ccf), max(ccf), color='red')
                 #plt.show()
                 return None, None, None
-
+        if plot:
+            x_fit = np.linspace(lags_crop[0]-0.5 if lags_crop[0]-0.5 >0 else 0, lags_crop[-1]+0.5 if lags_crop[-1]+0.5 < lags[-1] else lags[-1], 100)
+            y_fit = sine_func(x_fit, *popt)
+            ax.plot(x_fit, y_fit, color='r', linestyle='--')
+            tmp = f'{i}th ccf: \n amp: {round(popt[1], 2)}, freq: {round(popt[2], 2)}, phase: {round(popt[3], 2)}'
+            fig.text(0.5, 0.02, tmp, ha='center')
+            plt.show()
         return popt, pcov, mse
         
     def calc_fourier_peaks(self, plot=False):
@@ -1334,7 +1350,7 @@ class ImageAnalysis:
             idx = np.where(amp >= min_amp)[0]
             self.idx_top = idx
         
-    def plot_top_x_roi(self, x=0.1):
+    def plot_top_x_roi(self, x=0.1, fig_ax=None):
         """
         Plot the top x% of ROIs, ranked by their Fourier peak amplitudes.
         
@@ -1347,8 +1363,10 @@ class ImageAnalysis:
         if hasattr(self, 'top_x') and self.top_x != x:
             min_amp = self.get_amplitude_top_x(x)
             self.set_idx_top_x_roi(min_amp)
-        
-        fig, ax = plt.subplots(figsize=(12, 10))
+        if fig_ax is None:
+            fig, ax = plt.subplots(figsize=(12, 10))
+        else:
+            fig, ax = fig_ax
         ax.imshow(self.raw, cmap='gray')
         if len(self.roi_instances) == 0:
             idx = self.idx_top
@@ -1369,7 +1387,57 @@ class ImageAnalysis:
                     ax.add_patch(rect)
                 
         ax.set_title(f'Top {x*100}% of ROIs')
+        if fig_ax is None:
+            plt.show()
+        else:
+            return fig, ax
+        
+    def plot_top_x_roi_interactive(self, x=0.1):
+        fig, ax = plt.subplots(figsize=(12, 10))
+        fig, ax = self.plot_top_x_roi(x, (fig, ax))
+        
+        n_click = 0
+        def onclick(event):
+            nonlocal n_click, fig, ax, self
+            x, y = event.xdata, event.ydata
+            if 0 < x < self.nGridX*self.roi_size and 0 < y < self.nGridY*self.roi_size:
+                if len(self.roi_instances)>0:
+                    for i in range(len(self.roi_instances)):
+                        roi = self.roi_instances[i]
+                        if inside_rectangle((x, y), self.roi_array[i]):
+                            
+                            i = int(np.floor((y - roi.ny0*self.roi_size)/roi.roi_size))
+                            j = int(np.floor((x - roi.nx0*self.roi_size)/roi.roi_size))
+                            idx_n = np.ravel_multi_index((i, j), (roi.nGridY, roi.nGridX))
+                            rect = Rectangle((roi.nx0*self.roi_size+j*roi.roi_size, roi.ny0*self.roi_size+i*roi.roi_size), roi.roi_size, roi.roi_size, linewidth=1, edgecolor='r', facecolor='r', alpha=0.4)
+                            if n_click >0:
+                                # remove last patch from ax
+                                ax.patches[-1].remove()
+                            ax.add_patch(rect)
+                            if roi.ccf_mask[idx_n]:
+                                roi.calc_fourier_peak_one_ccf(idx_n, plot=True)
+                            n_click += 1
+                            # Redraw the figure
+                            fig.canvas.draw()
+                else:
+                    i = int(np.floor(y/self.roi_size))
+                    j = int(np.floor(x/self.roi_size))
+                    idx_n = np.ravel_multi_index((i, j), (self.nGridY, self.nGridX))
+                    rect = Rectangle((j*self.roi_size, i*self.roi_size), self.roi_size, self.roi_size, linewidth=1, edgecolor='r', facecolor='r', alpha=0.4)
+                    if n_click >0:
+                        # remove last patch from ax
+                        ax.patches[-1].remove()
+                    ax.add_patch(rect)
+                    if self.ccf_mask[idx_n]:
+                        self.calc_fourier_peak_one_ccf(idx_n, plot=True)
+                    n_click += 1
+        fig.canvas.mpl_connect('button_press_event', onclick)
         plt.show()
+                            
+                            
+                
+            
+        
         
             
     def select_roi_manually(self):
@@ -1756,7 +1824,7 @@ class ROI(ImageAnalysis):
         self.raw_crop = np.copy(self.raw[:self.nGridY * self.roi_size, :self.nGridX * self.roi_size])
         self.nYCrop, self.nXCrop = self.raw_crop.shape
 
-    def apply_steerable_filter_finetuning(self):
+    def apply_steerable_filter_finetuning(self, plot=True):
         """
         This method applies a steerable filter to the image self.raw. It calculates the response of the filter, the response of the input image to rotated versions of the filter, and the angle map.
         
@@ -1781,8 +1849,11 @@ class ROI(ImageAnalysis):
         idx = np.argmax(cluster_percentage_arr)
         mean = cluster_mean_arr[idx]
         std = cluster_std_arr[idx]
-        min_angle = mean - 2*std
-        max_angle = mean + 2*std
+        min_angle = mean - 3*std
+        max_angle = mean + 3*std
+        if max_angle-min_angle < 10:
+            min_angle -=3
+            max_angle +=3
         if self.nAngles < 2 * int(np.floor(max_angle - min_angle)):
             self.nAngles = 2 * int(np.floor(max_angle - min_angle))
         angle_array = np.linspace(min_angle, max_angle, self.nAngles, endpoint=True)
@@ -1790,7 +1861,8 @@ class ROI(ImageAnalysis):
         angle_array = angle_array * np.pi / 180
         
         self.__apply_steerable_filter(angle_array)
-        plot_steerable_filter_results(self.raw, self.res, self.xy_values_k0, self.steerable_sigma)
+        if plot:
+            plot_steerable_filter_results(self.raw, self.res, self.xy_values_k0, self.steerable_sigma)
  
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
         
@@ -2173,7 +2245,7 @@ def interactive_image_analysis():
     
     change = True
     print(f'Current sigma for steerable filter: {image_analysis.steerable_sigma}\n Applying steerable filter...')
-    image_analysis.apply_steerable_filter(apply_to_ROI=False)
+    image_analysis.apply_steerable_filter(plot_finetuning=False)
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma)
     
     while change:
@@ -2197,7 +2269,7 @@ def interactive_image_analysis():
     print('Calculating the cross correlation:')
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.plot_top_x_roi()
+    image_analysis.plot_top_x_roi_interactive()
     save = True
     if save:
         #embed()
@@ -2221,14 +2293,14 @@ def interactive_image_analysis():
     
 def non_interactive():
     path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
-    path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
+    #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
     # load the image
     tif = TiffFile(path)
     n_slices = int(len(tif.pages)/4)
-    mask_channel = 0#3#3 #0 # 3
-    slice_index = 9#0 #9 # 0
-    substrate1_channel = 0#3
-    substrate2_channel = 0#3
+    mask_channel = 3#0#3#3 #0 # 3
+    slice_index = 0#9#0 #9 # 0
+    substrate1_channel = 3#0#3
+    substrate2_channel = 3#0#3
     
     image_analysis = ImageAnalysis()
     raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
@@ -2249,7 +2321,7 @@ def non_interactive():
     image_analysis.apply_steerable_filter()
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.plot_top_x_roi()
+    image_analysis.plot_top_x_roi_interactive()
     save = True
     if save:
         
@@ -2262,8 +2334,8 @@ def non_interactive():
 def main():
     
     
-    #interactive_image_analysis()
-    non_interactive()
+    interactive_image_analysis()
+    #non_interactive()
 
     
  
