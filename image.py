@@ -41,6 +41,7 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 from scipy.optimize import curve_fit
 from scipy.fftpack import fft
 from scipy.signal import argrelextrema, find_peaks
+from scipy.stats import circmean, circstd, circvar
 
 # For resizing images
 from skimage.transform import resize  
@@ -65,7 +66,23 @@ import steerable
 # For reading and writing TIFF files
 from tifffile import TiffFile
 
+def get_linear_trend(x, y, smooth=True):
+    if smooth:
+        # Define window size for moving average
+        window_size = 5
 
+        # Compute moving averages
+        smoothed_y = np.convolve(y, np.ones(window_size)/window_size, mode='same')
+
+        y = smoothed_y
+
+    # Calculate the linear trend
+    slope, intercept = np.polyfit(x, y, 1)
+
+    # Calculate the linear trend
+    trend = slope * x + intercept
+
+    return trend, slope, intercept
 
 
 
@@ -85,13 +102,15 @@ def sine_func(x, offs, amp, f, phi):
     """
     return offs + amp * np.sin(2 * np.pi * f * x + phi)
 
-def sine_fit(x, y, guess=None, plot=False, tol=0.00025):
+def sine_fit(x, y, trend=None, guess=None, plot=False, tol=0.00025):
     """
     Estimate Parameter of a noisy sine wave by FFT and non-linear fitting.
     
     Parameter:
         - x (list): The x-coordinates of the signal.
         - y (list): The y-coordinates of the signal.
+        - trend (list, optional): The trend of the signal. Defaults to None.
+        - guess (list, optional): The initial guess for the Parameter (offset, amplitude, frequency, phase). Defaults to None.
         - plot (bool): Whether to plot the signal and the fit.
     
     Returns:
@@ -100,7 +119,8 @@ def sine_fit(x, y, guess=None, plot=False, tol=0.00025):
         - mse (float): The mean squared error of the fit.
     
     """
-    
+    if trend is not None:
+        y = y - trend
     
     
     if guess is None:
@@ -108,6 +128,9 @@ def sine_fit(x, y, guess=None, plot=False, tol=0.00025):
     else:
         # Perform the fit
         popt, pcov = curve_fit(sine_func, x, y, p0=guess)
+        
+    if trend is not None:
+        popt[0] += trend[0]
     
     # Calculate mean squared error
     mse = np.mean((y - sine_func(x, *popt)) ** 2)
@@ -961,7 +984,7 @@ class ImageAnalysis:
         
         
         # Create an angle map based on the maximum response for each ROI
-        anglemap = np.zeros((self.nGridY, self.nGridX))
+        anglemap = np.full((self.nGridY, self.nGridX), np.nan)
         for i in range(self.nGridY):
             for j in range(self.nGridX):
                 if self.raw_roi_mask[i, j] == 1:
@@ -1174,7 +1197,26 @@ class ImageAnalysis:
         plt.savefig('ccf_human.png', dpi=300)
         plt.show()
     
-    def calc_fourier_peak_one_ccf(self, i, plot=False):
+    def calc_fourier_peak_one_ccf(self, i, plot=False, upper_limit=3):
+        """
+        Calculate the Fourier peak of one cross-correlation function (CCF).
+
+        Parameters:
+            - i (int): Index of the CCF to analyze.
+            - plot (bool, optional): If True, plot the CCF and the fitted sine wave. Defaults to False.
+            - upper_limit (float, optional): Upper limit for the lags. Defaults to 3 \mu m.
+
+        Returns:
+            - popt (array): Optimal values for the parameters of the sine function that fits the CCF.
+            - pcov (2d array): The estimated covariance of popt.
+            - mse (float): Mean squared error of the fit.
+
+        This function first crops the CCF around its first minima and maxima. The cropping is done iteratively, 
+        starting with a prominence percentile of 80 and decreasing by 5 each time an error occurs during cropping.
+        After a successful crop, the function estimates the frequency of the CCF using FFT and fits a sine function to it.
+        If the amplitude or wavelength of the fit is too large, the function increases the cropping factor that effectively enlarges the cropped region and tries again.
+        If the cropping factor exceeds 0.5, the function gives up and returns None for all outputs.
+        """
         if not self.ccf_mask[i]:
             return None, None, None
         ccf = self.ccf_all[i, self.ind] # y
@@ -1190,14 +1232,20 @@ class ImageAnalysis:
             while invalid_crop and percent > 50:
                 try:  
                     prominence = np.percentile(ccf, percent)
+                    if upper_limit is not None:
+                        lags_tmp = lags[lags<upper_limit]
+                        ccf_tmp = ccf[lags<upper_limit]
+                    else:
+                        lags_tmp = lags
+                        ccf_tmp = ccf
                     if not plot:
-                        start_idx, end_idx, diff, [idx_1, idx_2, idx_3],_= crop_around_extrema(lags, ccf, prominence, factor)
+                        start_idx, end_idx, diff, [idx_1, idx_2, idx_3],_= crop_around_extrema(lags_tmp, ccf_tmp, prominence, factor)
                     else:
                         if clear:
                             ax.clear()
                         else:
                             fig, ax = plt.subplots(figsize=(12, 10))
-                        start_idx, end_idx, diff, [idx_1, idx_2, idx_3], (fig, ax)= crop_around_extrema(lags, ccf, prominence, factor, (fig, ax))
+                        start_idx, end_idx, diff, [idx_1, idx_2, idx_3], (fig, ax)= crop_around_extrema(lags_tmp, ccf_tmp, prominence, factor, (fig, ax))
                     lags_crop = lags[start_idx:end_idx]
                     ccf_crop = ccf[start_idx:end_idx]
                     invalid_crop = False
@@ -1223,8 +1271,9 @@ class ImageAnalysis:
                     guess = [np.mean(ccf_crop), np.std(ccf_crop), estimate_f, 0]
                 except Exception as er:
                     print(f"An error occurred during FFT for {i}th ccf: ", er)
-                    
-                popt, pcov, mse = sine_fit(lags_crop, ccf_crop, guess)
+                trend, slope, intercept = get_linear_trend(lags, ccf)
+                trend_crop = trend[start_idx:end_idx]
+                popt, pcov, mse = sine_fit(lags_crop, ccf_crop, trend=trend_crop, guess=guess)
                 
                 if np.abs(popt[1])>1.3*diff/2:
                     print(f"An error occurred during sine fitting for {i}th ccf: ", f'amplitude of fit is too large ({round(np.abs(popt[1]), 2)} >> {round(diff/2, 2)})')
@@ -1252,7 +1301,12 @@ class ImageAnalysis:
                 return None, None, None
         if plot:
             x_fit = np.linspace(lags_crop[0]-0.5 if lags_crop[0]-0.5 >0 else 0, lags_crop[-1]+0.5 if lags_crop[-1]+0.5 < lags[-1] else lags[-1], 100)
+            if upper_limit is not None:
+                x_upper = lags[lags>upper_limit]
+                y_upper = ccf[lags>upper_limit]
+                ax.plot(x_upper, y_upper, 'o', color='#1f77b4')
             y_fit = sine_func(x_fit, *popt)
+            ax.plot(lags, slope*lags+intercept, color='orange', linestyle='--')
             ax.plot(x_fit, y_fit, color='r', linestyle='--')
             tmp = f'{i}th ccf: \n amp: {round(popt[1], 2)}, freq: {round(popt[2], 2)}, phase: {round(popt[3], 2)}'
             fig.text(0.5, 0.02, tmp, ha='center')
@@ -1505,7 +1559,7 @@ class ImageAnalysis:
         mask_thresh_frame_slider = Slider(mask_thresh_slider_ax, 'mask threshhold', 0, 1000, valinit=self.mask_thresh, valstep=50)
 
         roi_thresh_slider_ax = plt.axes([0.2, 0.08, 0.65, 0.03])
-        roi_thresh_frame_slider = Slider(roi_thresh_slider_ax, 'roi threshhold', 0, 0.85, valinit=self.roi_thresh, valstep=0.1)
+        roi_thresh_frame_slider = Slider(roi_thresh_slider_ax, 'roi threshhold', 0, 0.85, valinit=self.roi_thresh, valstep=0.05)
 
         roi_size_slider_ax = plt.axes([0.2, 0.14, 0.65, 0.03])
         roi_size_frame_slider = Slider(roi_size_slider_ax, 'roi size', 5, 50, valinit=self.roi_size, valstep=5)
@@ -1843,19 +1897,23 @@ class ROI(ImageAnalysis):
         """
         roi_mask_superclass = self.image_analysis.raw_roi_mask_array[self.i].copy()
         anglemap = self.image_analysis.anglemap.copy()
-        anglemap[roi_mask_superclass == 0] = 0
+        anglemap[roi_mask_superclass == 0] = np.nan
         # TODO: add check if steerable filter has already been applied
         
         self.create_roi_mask() 
         anglemap = anglemap[self.ny0:self.ny1, self.nx0:self.nx1]
         
-        # Get only non-zero angles
-        anglemap_nonzero = anglemap[anglemap!=0]
-        #np.savetxt('comparison/anglemap_test.csv', anglemap_nonzero, delimiter=',')
-        _, _, _, cluster_mean_arr, _, cluster_percentage_arr, cluster_std_arr = find_cluster(anglemap_nonzero, n_clusters=3, print_=True, min_diff=10)
-        idx = np.argmax(cluster_percentage_arr)
-        mean = cluster_mean_arr[idx]
-        std = cluster_std_arr[idx]
+        # Get only valid angles
+        angles_deg = anglemap[~np.isnan(anglemap)]
+        angles_rad = angles_deg * np.pi / 180
+        
+        #np.savetxt('comparison/angles_deg.csv', anglemap_nonzero, delimiter=',')
+        angles_rad, labels, mean_arr, std_arr, perc_arr = find_cluster(angles_rad, 3, min_diff_rad=30*np.pi/180, angle_max=np.pi, print_=True)
+        idx = np.argmax(perc_arr)
+        
+        mean = mean_arr[idx]*180/np.pi
+        std = std_arr[idx]*180/np.pi
+        
         min_angle = mean - 3*std
         max_angle = mean + 3*std
         if max_angle-min_angle < 10:
@@ -1873,102 +1931,52 @@ class ROI(ImageAnalysis):
  
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
         
-def get_cluster_parameter(data, labels, print_=False):
-    cluster_counts = Counter(labels)
-    n_clusters = len(cluster_counts)
-    total_data_points = len(data)
-    cluster_data_arr = pd.DataFrame()
-    cluster_min_arr = np.zeros(n_clusters)
-    cluster_max_arr = np.zeros(n_clusters)
-    cluster_mean_arr = np.zeros(n_clusters)
-    cluster_diff_arr = np.zeros(n_clusters)
-    cluster_percentage_arr = np.zeros(n_clusters)
-    cluster_std_arr = np.zeros(n_clusters)
+def find_cluster(angles_rad, n_clusters, min_diff_rad=0, angle_max=np.pi, print_=False):
+    angles_rad = np.fmod(angles_rad, np.pi)
+    angles_rad = angles_rad[~np.isnan(angles_rad)]
+    angles_rad = angles_rad.flatten().reshape(-1, 1)
     
-    for i, cluster in enumerate(cluster_counts):
-        # Get the data points in the cluster
-        cluster_data = pd.DataFrame({i: data[labels == cluster].flatten()})
-        if cluster_data_arr.empty:
-            cluster_data_arr = cluster_data
-        else:
-            cluster_data_arr = pd.concat([cluster_data_arr, cluster_data], axis=1)
-        cluster_percentage_arr[i] = (cluster_counts[cluster] / total_data_points) * 100
-        # Calculate the mean of the data points in the cluster
-        cluster_mean_arr[i] = np.nanmean(cluster_data)
-        
-        # Calculate the minimum and maximum of the data points in the cluster
-        cluster_min_arr[i] = np.nanmin(cluster_data)
-        cluster_max_arr[i] = np.nanmax(cluster_data)
-        
-        # calc standard deviation
-        cluster_std_arr[i] = np.nanstd(cluster_data)
-        
-        # Calculate the difference between the maximum and minimum
-        cluster_diff_arr[i] = cluster_max_arr[i] - cluster_min_arr[i]
-        # Iterate over the clusters
-    if print_:
-        for i, cluster in enumerate(cluster_counts):
-            print('Cluster:', cluster)
-            print('Mean:', round(cluster_mean_arr[i], 2))
-            print('Min:', cluster_min_arr[i])
-            print('Max:', cluster_max_arr[i])
-            print('Difference between max and min:', cluster_diff_arr[i])
-            print('Percentage:', cluster_percentage_arr[i], '%\n')
-        print('--------------------------------------')
-    return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
+    points = np.column_stack([np.cos(angles_rad), np.sin(angles_rad)])
     
-    
-def find_cluster(data, n_clusters, print_=False, min_diff=0):
-    """
-    Find Clusters in an array, determine the range (2*std) of the cluster with the highest percentage of data points and return an array of angles in this range.
-    
-    Parameter:
-        - data (ndarray): The array to find clusters in.
-        - n_clusters (int): The number of clusters to find.
-        - print_ (boolean): If True, print the Parameter of each cluster.
-        - min_diff (float): The minimum difference between the means of two clusters. If the difference is smaller than this value, the number of clusters is reduced by one.
-    Returns:
-        - cluster_data_arr (2darray): The data points in each cluster.
-        - cluster_min_arr (1darray): The minimum of each cluster.
-        - cluster_max_arr (1darray): The maximum of each cluster.
-        - cluster_mean_arr (1darray): The mean of each cluster.
-        - cluster_diff_arr (1darray): The difference between the maximum and minimum of each cluster.
-        - cluster_percentage_arr (1darray): The percentage of data points in each cluster.
-        - cluster_std_arr (1darray): The standard deviation of each cluster.
-    """
-    
-    # Flatten the 2D array
-    data = data.flatten().reshape(-1, 1)
-    
-    # Fit the KMeans algorithm to the data
-    kmeans = KMeans(n_clusters=n_clusters, init='k-means++', max_iter=300, n_init=10, random_state=0)
-    kmeans.fit(data)
-
-    # Count the number of elements in each cluster
+    kmeans = KMeans(n_clusters=n_clusters).fit(points)
     labels = kmeans.labels_
-    cluster_counts = Counter(labels)
-    
- 
-    # get cluster parameter
-    cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr = get_cluster_parameter(data, labels, print_=True)
+    mean_arr = np.zeros(n_clusters)
+    std_arr = np.zeros(n_clusters)
+    perc_arr = np.zeros(n_clusters)
+    plot_ = False
+    if plot_:
+        for i in range(n_clusters):
+            plt.plot(points[labels == i, 0], points[labels == i, 1], 'o')
+        ax = plt.gca()
+        ax.set_aspect(1)
+        plt.show()
+    for i in np.unique(labels):
+        cluster_angles_rad = angles_rad[labels == i]
+        mean_arr[i] = circmean(cluster_angles_rad, high=angle_max, low=0)
+        std_arr[i] = circstd(cluster_angles_rad, high=angle_max, low=0)
+        perc_arr[i] = len(cluster_angles_rad)/len(angles_rad)
+        if print_:
+            print(f'Cluster {i}: mean = {mean_arr[i]*180/np.pi :.2f}, std = {std_arr[i]*180/np.pi :.2f}, percentage = {perc_arr[i]*100 :.2f}%')
 
-    if min_diff > 0:
+    if min_diff_rad > 0:
         # Calculate the absolute difference between each mean and all other means
-        diff_matrix = np.abs(cluster_mean_arr[:, None] - cluster_mean_arr)
+        diff_matrix = np.abs(mean_arr[:, None] - mean_arr)
 
         # Get the upper triangle of the matrix excluding the diagonal
         
         diff_matrix = np.triu(diff_matrix, k=1)
         diff_matrix[np.tril_indices(diff_matrix.shape[0])] = np.nan
-        close_clusters = np.argwhere(diff_matrix < min_diff)
+        close_clusters = np.argwhere(diff_matrix < min_diff_rad)
         
         if n_clusters > 1 and len(close_clusters) > 0:
             if print_:
                 print(f'clusters are too close together, reducing number of clusters from {n_clusters} to {n_clusters-1}')
-            find_cluster(data, n_clusters-1, print_=print_, min_diff=min_diff)
+            find_cluster(angles_rad=angles_rad, n_clusters=n_clusters-1, min_diff_rad=min_diff_rad, angle_max=angle_max, print_=print_)
         else:
-            return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
-    return cluster_data_arr, cluster_min_arr, cluster_max_arr, cluster_mean_arr, cluster_diff_arr, cluster_percentage_arr, cluster_std_arr
+            return angles_rad, labels, mean_arr, std_arr, perc_arr
+    return angles_rad, labels, mean_arr, std_arr, perc_arr
+        
+        
 
         
 class ROISelector:
@@ -2268,7 +2276,7 @@ def interactive_image_analysis():
         else:
             change = False
     np.savetxt('comparison/anglemap_accum.csv', image_analysis.anglemap, delimiter=',')
-    image_analysis.apply_steerable_filter(int(image_analysis.roi_size/2))
+    image_analysis.apply_steerable_filter()#int(image_analysis.roi_size/2)
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
     
     
@@ -2276,7 +2284,7 @@ def interactive_image_analysis():
     print('Calculating the cross correlation:')
     image_analysis.calc_all_ccf()
     #return image_analysis
-    image_analysis.plot_top_x_roi_interactive()
+    image_analysis.plot_top_x_roi_interactive(0.03)
     save = True
     if save:
         #embed()
@@ -2297,6 +2305,48 @@ def interactive_image_analysis():
         np.savetxt('comparison/ccf_fit_valid.csv', ccf_fit_valid, delimiter=',')
     
     #embed()
+def vary_roi_size(min, max, step=1):
+    roi_size_arr = np.arange(min, max+step, step)
+    var = np.zeros_like(roi_size_arr, dtype=float)
+    for i, roi_size in enumerate(roi_size_arr):
+        start = time.time()
+        path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
+        #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
+        # load the image
+        tif = TiffFile(path)
+        n_slices = int(len(tif.pages)/4)
+        mask_channel = 3#0#3#3 #0 # 3
+        slice_index = 0#9#0 #9 # 0
+        substrate1_channel = 3#0#3
+        substrate2_channel = 3#0#3
+        
+        image_analysis = ImageAnalysis()
+        raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
+        raw_info = tif.pages[4*slice_index+mask_channel].tags
+        
+        # get image factor
+        factor = raw_info['XResolution'].value[0]  # The Xresolution tag is a ratio, so we take the numerator
+        pixSize = 1 / factor * 10**(6) # Factor to go from pixels to micrometers
+        
+        image_analysis.set_mask_image(raw, pixSize)
+        image1 = np.asarray(tif.pages[4*slice_index + substrate1_channel].asarray())
+        image2 = np.asarray(tif.pages[4*slice_index + substrate2_channel].asarray())
+        image_analysis.set_subtrate1_image(image1)
+        image_analysis.set_substrate2_image(image2)
+        
+        image_analysis.roi_size = roi_size
+        image_analysis.mask_background()
+        image_analysis.apply_steerable_filter()
+        end = time.time()
+        #plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
+        
+        angles_deg = image_analysis.anglemap[~np.isnan(image_analysis.anglemap)]
+        angles_rad = angles_deg * np.pi / 180
+        var[i] = circvar(angles_rad, high=np.pi, low=0)
+        
+        print(f' {i+1}/{len(roi_size_arr)} done in {end-start  :.2f}s : roi_size = {roi_size}, var = {var[i]:.2f}')
+    plt.plot(roi_size_arr, var, 'o')
+    plt.show()
     
 def non_interactive():
     path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
@@ -2343,6 +2393,7 @@ def main():
     
     interactive_image_analysis()
     #non_interactive()
+    #vary_roi_size(15, 58, 1)
 
     
  
