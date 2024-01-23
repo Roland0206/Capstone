@@ -1,6 +1,6 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Arch Linux) (preloaded format=pdflatex 2024.1.18)  23 JAN 2024 15:12
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Arch Linux) (preloaded format=pdflatex 2024.1.18)  23 JAN 2024 16:35
 entering extended mode
- restricted \write18 enabled.
+ \write18 enabled.
  file:line:error style messages enabled.
  %&-line parsing enabled.
 **/home/roland/Desktop/Capstone/CapstonePoster.tex
@@ -303,7 +303,21 @@ Package pdftexcmds Info: \pdfdraftmode found.
 Package: trimspaces 2009/09/17 v1.1 Trim spaces around a token list
 ) (/usr/share/texmf-dist/tex/latex/tools/shellesc.sty
 Package: shellesc 2019/11/08 v1.0c unified shell escape interface for LaTeX
-Package shellesc Info: Restricted shell escape enabled on input line 77.
+Package shellesc Info: Unrestricted shell escape enabled on input line 75.
+) (/usr/share/texmf-dist/tex/latex/ifplatform/ifplatform.sty
+Package: ifplatform 2017/10/13 v0.4a Testing for the operating system
+ (/usr/share/texmf-dist/tex/generic/catchfile/catchfile.sty
+Package: catchfile 2019/12/09 v1.8 Catch the contents of a file (HO)
+ (/usr/share/texmf-dist/tex/generic/etexcmds/etexcmds.sty
+Package: etexcmds 2019/12/15 v1.7 Avoid name clashes with e-TeX commands (HO)
+)) (/usr/share/texmf-dist/tex/generic/iftex/ifluatex.sty
+Package: ifluatex 2019/10/25 v1.5 ifluatex legacy package. Use iftex instead.
+)
+runsystem(uname -s > "CapstonePoster.w18")...executed.
+
+ (./CapstonePoster.w18)
+runsystem(rm -- "CapstonePoster.w18")...executed.
+
 )
 \c@svg@param@lastpage=\count292
 \svg@box=\box99
@@ -606,44 +620,30 @@ LaTeX Font Info:    Trying to load font information for U+msb on input line 58.
  (/usr/share/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
+Package svg Info: Last page of `./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf' is 1 on input line 61.
+ (./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf_tex
+<./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf, id=5, page=1, 852.52248pt x 247.41055pt>
+File: ./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf Graphic file (type pdf)
+<use ./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf, page 1>
+Package pdftex.def Info: ./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf , page1 used on input line 56.
+(pdftex.def)             Requested size: 354.66115pt x 102.92639pt.
+)
+Overfull \hbox (14.99998pt too wide) in paragraph at lines 54--63
+[]$[]$$[]$ 
+ []
 
-Package svg Warning: You didn't enable `shell escape' (or `write18')
-(svg)                so it wasn't possible to launch the Inkscape export
-(svg)                for `figures/TU_Dresden_Logo_blau_HKS41.svg' on input line 61.
-
-
-/home/roland/Desktop/Capstone/CapstonePoster.tex:61: Package svg Error: File `TU_Dresden_Logo_blau_HKS41_svg-tex.pdf' is missing.
-
-See the svg package documentation for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.61 ...h]{figures/TU_Dresden_Logo_blau_HKS41.svg}
-                                                  
-Did you run the export with Inkscape? There's no file
-`./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf'
-although `figures/TU_Dresden_Logo_blau_HKS41.svg' was found.
-
-
-/home/roland/Desktop/Capstone/CapstonePoster.tex:61: Package svg Error: File `TU_Dresden_Logo_blau_HKS41_svg-tex.pdf_tex' is missing.
-
-See the svg package documentation for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.61 ...h]{figures/TU_Dresden_Logo_blau_HKS41.svg}
-                                                  
-Did you run the export with Inkscape? There's no file
-`./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf_tex'
-although `figures/TU_Dresden_Logo_blau_HKS41.svg' was found.
+(./figures/raw_modified.pgf)
+Overfull \hbox (53.11797pt too wide) in paragraph at lines 49--83
+ [][] 
+ []
 
 (./figures/raw_mask.pgf)
-Overfull \hbox (60.00003pt too wide) in paragraph at lines 106--109
+Overfull \hbox (60.00003pt too wide) in paragraph at lines 105--108
 $[]$ 
  []
 
 (./figures/roi_mask.pgf)
-Overfull \hbox (60.00003pt too wide) in paragraph at lines 121--124
+Overfull \hbox (60.00003pt too wide) in paragraph at lines 120--123
 $[]$ 
  []
 
@@ -654,20 +654,20 @@ Non-PDF special ignored!
 <special> header=./a0header.ps
 Non-PDF special ignored!
 <special> papersize=59.4cm,83.96cm
-{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texmf-dist/fonts/enc/dvips/base/8r.enc} <./figures/raw_mask-000.png> <./figures/roi_mask-000.png>] (./CapstonePoster.aux) ) 
+{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texmf-dist/fonts/enc/dvips/base/8r.enc} <./svg-inkscape/TU_Dresden_Logo_blau_HKS41_svg-tex.pdf> <./figures/raw_fly-000.png> <./figures/raw_human-000.png> <./figures/raw_mask-000.png> <./figures/roi_mask-000.png>] (./CapstonePoster.aux) ) 
 Here is how much of TeX's memory you used:
- 26969 strings out of 477932
- 687494 string characters out of 5837865
- 3159056 words of memory out of 5000000
- 46720 multiletter control sequences out of 15000+600000
+ 27154 strings out of 477932
+ 691919 string characters out of 5837865
+ 3165734 words of memory out of 5000000
+ 46878 multiletter control sequences out of 15000+600000
  530327 words of font info for 68 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 94i,12n,92p,757b,2446s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 94i,12n,92p,757b,2419s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/share/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/share/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on CapstonePoster.pdf (1 page, 293781 bytes).
+Output written on CapstonePoster.pdf (1 page, 12388371 bytes).
 PDF statistics:
- 52 PDF objects out of 1000 (max. 8388607)
- 30 compressed objects within 1 object stream
+ 60 PDF objects out of 1000 (max. 8388607)
+ 32 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
- 23 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 43 words of extra memory for PDF output out of 10000 (max. 10000000)
 
