@@ -65,7 +65,15 @@ import steerable
 
 # For reading and writing TIFF files
 from tifffile import TiffFile
-
+import tikzplotlib as tpl
+'''import matplotlib
+matplotlib.use("pgf")
+matplotlib.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+#    'font.family': 'sans-serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})'''
 def get_linear_trend(x, y, smooth=True):
     if smooth:
         # Define window size for moving average
@@ -348,7 +356,7 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     else:
         plt.show()
 
-def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thresh, gblur_sigma, roi_instances=[],nuclei_mask=None, fig=None):
+def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thresh, gblur_sigma, roi_instances=[],nuclei_mask=None, fig=None, tikz=False):
     """
     Plots the mask and ROIMask images.
 
@@ -369,11 +377,20 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
     if not fig:
         fig = plt.figure()
         return_fig = False
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax2 = fig.add_subplot(1, 2, 2)
-    ax1.set_title(fr'Raw Mask (thresh. = {mask_thresh}), $\sigma_{{gb}}$ = {gblur_sigma})')
     
-    ax2.set_title(f'ROIMask (size = {roi_size}, thresh. = {roi_thresh})')
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax2 = fig.add_subplot(2, 1, 2)
+    if tikz:
+        fig1, ax1 = plt.subplots()
+        fig2, ax2 = plt.subplots()
+    
+    #ax1.set_xlim(0, raw_mask.shape[1])
+    ax1.set_ylim(raw_mask.shape[0], 0)
+    #ax2.set_xlim(0, raw_roi_mask.shape[1])
+    #ax2.set_ylim(0, raw_roi_mask.shape[0])
+    ax1.set_title(fr'Raw Mask ($t_{{\text{{mask}}}}$ = {mask_thresh}), $\sigma_{{\text{{gb}}}}$ = {gblur_sigma})')
+    
+    ax2.set_title(fr'ROI Mask (size = {roi_size}, $t_{{\text{{ROI}}}}$ = {roi_thresh})')
 
     pic1 = ax1.imshow(raw_mask, cmap='gray')
   
@@ -401,7 +418,9 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
             ax1.add_patch(polygon2)
     
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
-    
+    if tikz:
+        tpl.save('figures/raw_mask.pgf',figure=fig1,  extra_axis_parameters={'width=\\textwidth', f'height = \\textwidth*{raw_mask.shape[0]/raw_mask.shape[1]}', 'hide x axis', 'hide y axis'})
+        tpl.save('figures/roi_mask.pgf',figure=fig2,  extra_axis_parameters={'width=\\textwidth', f'height = \\textwidth*{raw_roi_mask.shape[0]/raw_roi_mask.shape[1]}', 'hide x axis', 'hide y axis'})
     if return_fig:
         return pic1, pic2, ax1, ax2
     else:
@@ -2216,6 +2235,14 @@ def interactive_image_analysis():
     image_analysis = ImageAnalysis()
     tif, path, slice_index, mask_channel, substrate1_channel, substrate2_channel, nuclei_channel = choose_image_interactive()
     raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
+    
+    # save input image
+    mask_image = raw.copy()
+    plt.imshow(mask_image, vmin=mask_image.min(), vmax=mask_image.max(), cmap='viridis')
+    tpl.save('images_poster/test.pgf', extra_axis_parameters={'height=0.5\textwidth','width=\textwidth'})
+    #plt.savefig('images_poster/test1.pgf')
+
+    
     raw_info = tif.pages[4*slice_index+mask_channel].tags
     
     # get image factor
@@ -2348,6 +2375,69 @@ def vary_roi_size(min, max, step=1):
     plt.plot(roi_size_arr, var, 'o')
     plt.show()
     
+def save_images(human=False, nuclei=False):
+    if human:
+        path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
+        mask_channel = 0
+        substrate1_channel = 0
+        substrate2_channel = 0
+        nuclei_channel = 2
+        slice_index = 9
+    else:
+        path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
+        mask_channel = 3
+        substrate1_channel = 3
+        substrate2_channel = 3
+        slice_index = 0
+        
+    tif = TiffFile(path)
+    n_slices = int(len(tif.pages)/4)
+    
+    image_analysis = ImageAnalysis()
+    raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
+    raw_info = tif.pages[4*slice_index+mask_channel].tags
+    
+    # get image factor
+    factor = raw_info['XResolution'].value[0]  # The Xresolution tag is a ratio, so we take the numerator
+    pixSize = 1 / factor * 10**(6) # Factor to go from pixels to micrometers
+    
+    image_analysis.set_mask_image(raw, pixSize)
+    image1 = np.asarray(tif.pages[4*slice_index + substrate1_channel].asarray())
+    image2 = np.asarray(tif.pages[4*slice_index + substrate2_channel].asarray())
+    image_analysis.set_subtrate1_image(image1)
+    image_analysis.set_substrate2_image(image2)
+    if human and nuclei:
+        nuclei_image = np.asarray(tif.pages[4*slice_index + nuclei_channel].asarray())
+        image_analysis.set_nuclei_image(nuclei_image)
+    
+    # plot input image
+    fig, ax = plt.subplots()
+    ax.imshow(image_analysis.raw, vmin=image_analysis.raw.min(), vmax=image_analysis.raw.max(), cmap='viridis')
+    ax.set_aspect('equal')
+    ax.axis('off')
+    print(f'pixel size: {image_analysis.pixSize:.3f}µm')
+    if human:
+        ax.set_title(f'Titin (human data)')
+        #tpl.save('images_poster/raw_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+        if nuclei:
+            fig, ax = plt.subplots()
+            ax.set_aspect('equal')
+            ax.axis('off')
+            ax.imshow(image_analysis.raw_nuclei, vmin=image_analysis.raw_nuclei.min(), vmax=image_analysis.raw_nuclei.max(), cmap='viridis')
+            ax.set_title(f'Nuclei ')
+            #tpl.save('images_poster/raw_nuclei_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+    else:
+        ax.set_title(f'Sallimus (fly data)')
+        #tpl.save('images_poster/raw_fly.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+    image_analysis.mask_background()
+    if nuclei:
+            param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances, image_analysis.nuclei_mask]
+    else:
+        param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances]
+    
+    plot_mask_background(*param, tikz=True)
+        
+    
 def non_interactive():
     path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
     #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
@@ -2391,9 +2481,11 @@ def non_interactive():
 def main():
     
     
-    interactive_image_analysis()
+    #interactive_image_analysis()
     #non_interactive()
     #vary_roi_size(15, 58, 1)
+    #save_images()
+    save_images(human=True, nuclei=True)
 
     
  

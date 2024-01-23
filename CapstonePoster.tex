@@ -1,0 +1,129 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% a0poster Landscape Poster
+% LaTeX Template
+% Version 1.0 (22/06/13)
+%
+% The a0poster class was created by:
+% Gerlinde Kettl and Matthias Weiser (tex@kettl.de)
+% 
+% This template has been downloaded from:
+% http://www.LaTeXTemplates.com
+%
+% License:
+% CC BY-NC-SA 3.0 (http://creativecommons.org/licenses/by-nc-sa/3.0/)
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[a1,portrait]{a0poster}
+\usepackage{multicol} % This is so we can have multiple columns of text side-by-side
+\columnsep=70pt % This is the amount of white space between the columns in the poster
+\columnseprule=3pt % This is the thickness of the black line between the columns in the poster
+
+\usepackage[svgnames]{xcolor} % Specify colors by their 'svgnames', for a full list of all colors available see here: http://www.latextemplates.com/svgnames-colors
+
+\usepackage{times} % Use the times font
+%\usepackage{palatino} % Uncomment to use the Palatino font
+
+\usepackage{graphicx} % Required for including images
+\graphicspath{{figures/}} % Location of the graphics files
+\usepackage{booktabs} % Top and bottom rules for table
+\usepackage[font=small,labelfont=bf]{caption} % Required for specifying captions to tables and figures
+\usepackage{amsfonts, amsmath, amsthm, amssymb} % For math fonts, symbols and environments
+\usepackage{wrapfig} % Allows wrapping text around tables and figures
+\usepackage{svg}
+\usepackage{pgf}
+\usepackage{pgfplots}
+\usepackage{tikz}
+\usepgfplotslibrary{groupplots}
+\begin{document}
+
+%----------------------------------------------------------------------------------------
+%	POSTER HEADER 
+%----------------------------------------------------------------------------------------
+
+% The header is divided into three boxes:
+% The first is 55% wide and houses the title, subtitle, names and university/organization
+% The second is 25% wide and houses contact information
+% The third is 19% wide and houses a logo for your university/organization or a photo of you
+% The widths of these boxes can be easily edited to accommodate your content as you see fit
+
+\begin{minipage}{0.75\linewidth}
+\veryHuge \color{NavyBlue} \textbf{How to build muscle} \color{Black}\\ % Title
+\Huge\textit{Image and data analysis of myofibrillogenesis}\\[1cm] % Subtitle
+\LARGE{Nico Wrobel, Tim Burghardt \& Roland Brandau}\\ % Author(s)
+\end{minipage}%
+\begin{minipage}{0.25\linewidth}
+\centering
+\includesvg[width=0.9\linewidth]{figures/TU_Dresden_Logo_blau_HKS41.svg}
+\end{minipage}
+
+\vspace{1cm} % A bit of extra whitespace between the header and poster content
+
+%----------------------------------------------------------------------------------------
+
+\begin{multicols}{2} % This is how many columns your poster will be broken into, a poster with many figures may benefit from less columns whereas a text-heavy poster benefits from more
+
+
+%----------------------------------------------------------------------------------------
+%	INTRODUCTION
+%----------------------------------------------------------------------------------------
+
+\color{SaddleBrown} % SaddleBrown color for the introduction
+
+\section*{Introduction}
+Striated muscle cells contain bundles of so-called myofibrils. These are characterized by highly regular periodic units called sarcomeres, each bordered by two Z-discs. It is an open question as to how the first periodic structures are formed during the development of the muscle (see reference).\\
+To analyze the self-assembly process and answer this question, Francine Kolley (and co, reference) developed an image analysis algorithm that detects emerging periodic patterns based on autocorrelation functions along myofibrils. Using a steerable filter to determine local nematic order, the algorithm was applied primarily to images of Drosophila (fruit fly) muscle. To make it more applicable to myofibrillogenesis in human muscle cells, we have modified the algorithm (list changes?). The analysis of human data is more complex compared to fly data, and presents challenges such as... (elaborate on challenges, 2-pics side by side?).\\
+\begin{minipage}{0.45\textwidth}
+    \centering
+    %\input{figures/raw_modified.pgf}
+\end{minipage}
+
+On this poster, we show the application of the algorithm to myofibrillogenesis in human muscle cells and demonstrate its effectiveness with images illustrating key steps.
+
+%----------------------------------------------------------------------------------------
+%	OBJECTIVES
+%----------------------------------------------------------------------------------------
+
+\color{DarkSlateGray} % DarkSlateGray color for the rest of the content
+
+\section*{Image Preprocessing}
+To get optimal results when applying the steerable filter to the image, several steps have to be taken:
+\begin{enumerate}
+    \item Create a binary mask
+    \begin{enumerate}
+        \item Create a binary mask based on a threshold value \(t_{\text{mask}}\) for the pixel intensity \(I\): \(I \to 
+        \begin{cases}
+            1 & I<t_{\text{mask}}\\
+            0 & I \geq t_{\text{mask}}
+        \end{cases}\).
+        \item Apply a Gaussian filter with standard deviation \(\sigma_{\text{gb}}\) to reduce noise that might interfere, e.g. with ridge detection.
+        \item Exclude areas that overlap with nuclei: Therefore, we use a pretrained model \textit{2D\_versatile\_fluo} from the \textit{stardist} (ref) model to detect nuclei in the corresponding image. Afterward, we subtract the these regions from the mask.
+    \end{enumerate}
+    \begin{minipage}{0.5\textwidth}
+        \input{figures/raw_mask.pgf}
+    \end{minipage}
+    \item Create a binary mask for quadratic regions of interest (ROI)
+    \begin{enumerate}
+        \item Select the size of these ROIs and crop the dimension of the images to multiples of it.
+        \item Pad the edges of the images.
+        \item Create a binary mask for ROIs based on a threshold value \(t_{\text{ROI}}\) for the percentage of white pixels in the ROI \(p_{\text{white}}\):
+        \(I \to 
+        \begin{cases}
+            0 & p_{\text{white}} < t_{\text{ROI}}\\
+            1 & p_{\text{white}} \geq t_{\text{ROI}}
+        \end{cases}
+        \).
+    \end{enumerate}
+        \begin{minipage}{0.5\textwidth}
+        \input{figures/roi_mask.pgf}
+    \end{minipage}
+\end{enumerate}
+
+\clearpage
+
+\end{multicols}
+\end{document}
