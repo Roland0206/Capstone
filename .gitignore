@@ -7,7 +7,6 @@
 **/steerable/matlab/**
 .venv/
 **/*.csv
-**/*.png
 **/*.aux
 **/*.bbl
 **/*.bcf
