@@ -137,9 +137,6 @@ def sine_fit(x, y, trend=None, guess=None, plot=False, tol=0.00025):
         # Perform the fit
         popt, pcov = curve_fit(sine_func, x, y, p0=guess)
         
-    if trend is not None:
-        popt[0] += trend[0]
-    
     # Calculate mean squared error
     mse = np.mean((y - sine_func(x, *popt)) ** 2)
     if mse > tol:
@@ -624,7 +621,6 @@ def inside_rectangle(point, rect):
     ADAD = AD[0]*AD[0] + AD[1]*AD[1]
 
     return (0 <= ABAP <= ABAB) and (0 <= ADAP <= ADAD)
-
 
         
                 
@@ -1324,7 +1320,7 @@ class ImageAnalysis:
                 x_upper = lags[lags>upper_limit]
                 y_upper = ccf[lags>upper_limit]
                 ax.plot(x_upper, y_upper, 'o', color='#1f77b4')
-            y_fit = sine_func(x_fit, *popt)
+            y_fit = sine_func(x_fit, *popt) + (slope * x_fit + intercept)
             ax.plot(lags, slope*lags+intercept, color='orange', linestyle='--')
             ax.plot(x_fit, y_fit, color='r', linestyle='--')
             tmp = f'{i}th ccf: \n amp: {round(popt[1], 2)}, freq: {round(popt[2], 2)}, phase: {round(popt[3], 2)}'
@@ -2239,7 +2235,7 @@ def interactive_image_analysis():
     # save input image
     mask_image = raw.copy()
     plt.imshow(mask_image, vmin=mask_image.min(), vmax=mask_image.max(), cmap='viridis')
-    tpl.save('images_poster/test.pgf', extra_axis_parameters={'height=0.5\textwidth','width=\textwidth'})
+    #tpl.save('figures/test.pgf', extra_axis_parameters={'height=0.5\textwidth','width=\textwidth'})
     #plt.savefig('images_poster/test1.pgf')
 
     
@@ -2482,10 +2478,10 @@ def main():
     
     
     #interactive_image_analysis()
-    #non_interactive()
+    non_interactive()
     #vary_roi_size(15, 58, 1)
     #save_images()
-    save_images(human=True, nuclei=True)
+    #save_images(human=True, nuclei=True)
 
     
  

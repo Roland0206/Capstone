@@ -1,6 +1,7 @@
 \begin{tikzpicture}
 % First plot
 % Calculate the aspect ratio of the image
+
 \begin{scope}
     \begin{axis}[
     hide x axis,
@@ -23,7 +24,8 @@
 \end{scope}
 
 % Calculate the aspect ratio of the image
-\pgfmathsetmacro{\aspectratio}{6539.5/1945.5}
+\pgfmathsetmacro{\xmax}{6540/2}
+\pgfmathsetmacro{\aspectratio}{\xmax / 1946 }
 
 % Second plot
 \begin{scope}[xshift=0.25\textwidth] % Shift to the right for the second plot
@@ -36,7 +38,7 @@
     tick pos=left,
     title={Titin (human data)},
     x grid style={darkgray176},
-    xmin=-0.5, xmax=6539.5,
+    xmin=-0.5, xmax=\xmax,%6539.5,
     xtick style={color=black},
     y dir=reverse,
     y grid style={darkgray176},
