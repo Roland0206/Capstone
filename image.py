@@ -49,8 +49,12 @@ from skimage import measure
 
 
 # for detecting nuclei
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 from stardist.models import StarDist2D
+
+# this way, tensorflow uses the CPU instead of the GPU
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+import copy
 
 from csbdeep.utils import normalize
 
@@ -65,16 +69,21 @@ import steerable
 
 # For reading and writing TIFF files
 from tifffile import TiffFile
-import tikzplotlib as tpl
-'''import matplotlib
-matplotlib.use("pgf")
-matplotlib.rcParams.update({
-    "pgf.texsystem": "pdflatex",
-#    'font.family': 'sans-serif',
-    'text.usetex': True,
-    'pgf.rcfonts': False,
-})'''
+
 def get_linear_trend(x, y, smooth=True):
+    """
+    Calculate the linear trend of a given dataset. Optionally apply a smoothing operation before trend calculation.
+
+    Parameters:
+        - x (array-like): The independent data. Should be of the same length as `y`.
+        - y (array-like): The dependent data. Should be of the same length as `x`.
+        - smooth (bool, optional): Whether to apply a smoothing operation to `y` before trend calculation. Defaults to True.
+
+    Returns:
+        - trend (array-like): The calculated linear trend.
+        - slope (float): The slope of the linear trend.
+        - intercept (float): The y-intercept of the linear trend.
+    """
     if smooth:
         # Define window size for moving average
         window_size = 5
@@ -92,8 +101,6 @@ def get_linear_trend(x, y, smooth=True):
 
     return trend, slope, intercept
 
-
-
 def sine_func(x, offs, amp, f, phi):
     """
     sine function
@@ -110,9 +117,9 @@ def sine_func(x, offs, amp, f, phi):
     """
     return offs + amp * np.sin(2 * np.pi * f * x + phi)
 
-def sine_fit(x, y, trend=None, guess=None, plot=False, tol=0.00025):
+def sine_fit(x, y, trend=None, guess=None, plot=False):
     """
-    Estimate Parameter of a noisy sine wave by FFT and non-linear fitting.
+    Estimate Parameter of a noisy sine wave by non-linear regression.
     
     Parameter:
         - x (list): The x-coordinates of the signal.
@@ -139,10 +146,6 @@ def sine_fit(x, y, trend=None, guess=None, plot=False, tol=0.00025):
         
     # Calculate mean squared error
     mse = np.mean((y - sine_func(x, *popt)) ** 2)
-    if mse > tol:
-        #print(f'Warning: Mean squared error of the fit is {mse:.6f}.')
-        #plot = True
-        f=5
     
     
     # Plot if requested
@@ -158,7 +161,23 @@ def sine_fit(x, y, trend=None, guess=None, plot=False, tol=0.00025):
     return popt, pcov, mse
 
 def crop_around_extrema(x, y, prominence, factor, fig_ax=None):
+    """
+    This function crops a dataset around its extrema (minima and maxima).
     
+    Parameters:
+        - x (array-like): The x-values of the dataset.
+        - y (array-like): The y-values of the dataset.
+        - prominence (float): The prominence value for peak detection.
+        - factor (float): The factor used to determine the distance between the extrema and the cropping indices.
+        - fig_ax (tuple, optional): A tuple containing a figure and axes object for plotting. If None, no plot is created.
+    
+    Returns:
+        - start_idx (int): The start index of the cropped dataset.
+        - end_idx (int): The end index of the cropped dataset.
+        - diff (float): The difference between the maximum and minimum y-values.
+        - [idx_1, idx_2, idx_3] (list): The indices of the first minimum, maximum, and second minimum, respectively.
+        - (fig, ax) (tuple): A tuple containing a figure and axes object with the plot. Only returned if fig_ax is not None.
+    """
     # Find the indices of the minima and maxima in the dataset
     min_peak_idx, _ = find_peaks(-y, prominence=prominence)
     max_peak_idx, _ = find_peaks(y, prominence=prominence)
@@ -218,14 +237,18 @@ def crop_around_extrema(x, y, prominence, factor, fig_ax=None):
     # Calculate the difference between the maximum and minimum values
     diff = np.abs(y_max - y_min)
 
-    # Calculate the norm
+    # find the index of the point (norm_idx, y_norm) to the right of the first minimum (idx_1, val_1) such that the distance between both points is close to factor*diff
     norm_idx = idx_1 + np.argmin(np.abs(y[idx_1:idx_2] - (val_1 + diff * factor)))
+    
+    # calcutate the corresponding difference
     norm = np.linalg.norm([x[norm_idx]-x[idx_1], y[norm_idx]-y[idx_1]])
 
-    # Calculate the norms for the left and right sides
+    # determine for each point before the first minimum, the distance to the first minimum and substract norm
     y_norm_left = np.array([np.linalg.norm([x[idx]-x[idx_1], val-y[idx_1]])-norm for idx, val in enumerate(y[:idx_1+1])])
     #y_norm_left[y[:idx_1] > y_max] = np.nan
     #y_norm_left[y[:idx_1] < val_1] = np.nan
+    
+    # determine for each point after the second minimum, the distance to the second minimum and substract norm
     y_norm_right = np.array([np.linalg.norm([x[idx_3 + idx]-x[idx_3], val-y[idx_3]])-norm for idx, val in enumerate(y[idx_3:])])
     #y_norm_right[y[idx_3:] > y_max] = np.nan
     #y_norm_right[y[idx_3:] < val_3] = np.nan
@@ -238,6 +261,7 @@ def crop_around_extrema(x, y, prominence, factor, fig_ax=None):
         start_idx = idx_1
         end_idx = idx_3
 
+    # Plot if requested
     if fig_ax is not None:
         fig, ax = fig_ax
         ax.plot(x, y, 'o')
@@ -296,7 +320,7 @@ def white_tophat_trafo(raw, tophat_sigma):
     return cv2.morphologyEx(raw, cv2.MORPH_TOPHAT, selem)
                 
 
-def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_instances=[], fig=None, load_res=True):
+def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_instances=[], fig=None, load_res=True, tikz=False):
     """
     Plots the results of a steerable filter analysis.
 
@@ -348,10 +372,27 @@ def plot_steerable_filter_results(raw, res, xy_values_k0, steerable_sigma, roi_i
     
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
     
+    
     if return_fig:
         return fig, raw_display, res1_display, res2_display, ax1, ax2, ax3
-    else:
-        plt.show()
+    plt.show()
+    if tikz:
+        fig, ax = plt.subplots()
+        ax.imshow(raw, cmap='gray', vmin=qlow, vmax=qhigh)
+        ax.plot([x_start[::2], x_end[::2]],[y_start[::2], y_end[::2]], 'orange', linewidth=0.5)
+        ax.set_aspect('equal')
+
+        # Remove all axis ticks, titles, and labels
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_title('')
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+
+        ax.axis('off')
+        #plt.savefig('figures/local_nematic_order.png', dpi=1200, bbox_inches='tight', pad_inches=0)
 
 def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thresh, gblur_sigma, roi_instances=[],nuclei_mask=None, fig=None, tikz=False):
     """
@@ -375,12 +416,9 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
         fig = plt.figure()
         return_fig = False
     
-    ax1 = fig.add_subplot(2, 1, 1)
-    ax2 = fig.add_subplot(2, 1, 2)
-    if tikz:
-        fig1, ax1 = plt.subplots()
-        fig2, ax2 = plt.subplots()
-    
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax2 = fig.add_subplot(1, 2, 2)
+
     #ax1.set_xlim(0, raw_mask.shape[1])
     ax1.set_ylim(raw_mask.shape[0], 0)
     #ax2.set_xlim(0, raw_roi_mask.shape[1])
@@ -397,7 +435,7 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
 
         # Plot the contours in red
         for contour in contours:
-            ax1.plot(contour[:, 1], contour[:, 0], linewidth=1, color='r')
+            ax1.plot(contour[:, 1], contour[:, 0], linewidth=0.5, color='r')
 
     if len(roi_instances) > 0:
         for i in range(len(roi_instances)):
@@ -415,9 +453,7 @@ def plot_mask_background(raw_mask, raw_roi_mask, mask_thresh, roi_size, roi_thre
             ax1.add_patch(polygon2)
     
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.5)
-    if tikz:
-        tpl.save('figures/raw_mask.pgf',figure=fig1,  extra_axis_parameters={'width=\\textwidth', f'height = \\textwidth*{raw_mask.shape[0]/raw_mask.shape[1]}', 'hide x axis', 'hide y axis'})
-        tpl.save('figures/roi_mask.pgf',figure=fig2,  extra_axis_parameters={'width=\\textwidth', f'height = \\textwidth*{raw_roi_mask.shape[0]/raw_roi_mask.shape[1]}', 'hide x axis', 'hide y axis'})
+
     if return_fig:
         return pic1, pic2, ax1, ax2
     else:
@@ -782,6 +818,11 @@ class ImageAnalysis:
         
         if len(self.anglemap)==0 and smaller_roi_size is None:
             self.__apply_steerable_filter()
+            angles_deg = self.anglemap[~np.isnan(self.anglemap)]
+            angles_rad = angles_deg * np.pi / 180
+            var = circvar(angles_rad, high=np.pi, low=0)*180/np.pi
+            mean = circmean(angles_rad, high=np.pi, low=0)*180/np.pi
+            print(f'mean: {mean:.2f}°, variance: {var:.2f}°\n')
         if smaller_roi_size is None:
             smaller_roi_size = self.roi_size
             
@@ -800,6 +841,83 @@ class ImageAnalysis:
             
             # apply the steerable filter to the ROI (to the cropped images of the superclass)
             self.roi_instances[i].apply_steerable_filter_finetuning(plot=plot_finetuning)
+            angles_deg = self.roi_instances[i].anglemap[~np.isnan(self.roi_instances[i].anglemap)]
+            angles_rad = angles_deg * np.pi / 180
+            var = circvar(angles_rad, high=np.pi, low=0)*180/np.pi
+            mean = circmean(angles_rad, high=np.pi, low=0)*180/np.pi
+            print(f'mean of ROI {i}: {mean:.2f}°, variance of ROI {i}: {var:.2f}°\n')
+            #embed()
+    
+    def vary_smaller_roi_size(self, min_roi_size=10):
+        """ 
+        test how differnt roi sizes affect the result of the steerable filter
+        """
+        if len(self.anglemap)==0:
+            self.__apply_steerable_filter()
+        
+        smaller_roi_size_array = np.arange(min_roi_size, self.roi_size+1, 1)
+        
+        for i in range(len(self.roi_instances)):
+            
+            object_array = np.empty(len(smaller_roi_size_array), dtype=ROI)
+            var = np.zeros(len(smaller_roi_size_array))
+            
+            for j, smaller_roi_size in enumerate(smaller_roi_size_array):
+                
+                # reduce the size of the ROI to the smaller_roi_size
+                self.roi_instances[i].set_roi_size(smaller_roi_size)
+                
+                # set the superclass of each ROI instance to self, then the ROI instance has the same attributes as self
+                self.roi_instances[i].set_superclass(self)
+                
+                # crop the images of the superclass to the ROI
+                self.roi_instances[i].crop_images_superclass()
+                
+                start = time.time()
+                # apply the steerable filter to the ROI (to the cropped images of the superclass)
+                self.roi_instances[i].apply_steerable_filter_finetuning(plot=False)
+                end = time.time()
+                
+                angles_deg = self.roi_instances[i].anglemap[~np.isnan(self.roi_instances[i].anglemap)]
+                angles_rad = angles_deg * np.pi / 180
+                var[j] = circvar(angles_rad, high=np.pi, low=0)*180/np.pi
+                mean = circmean(angles_rad, high=np.pi, low=0)*180/np.pi
+                
+                print(f' {j+1}/{len(smaller_roi_size_array)} done in {end-start}s: roi_size = {smaller_roi_size}, var = {var[j]:.2f}°, mean = {mean:.2f}°\n')
+                
+                object_array[j] = copy.deepcopy(self.roi_instances[i])
+            # Define the window size for the moving average
+            window_size = 5
+
+            # Calculate the moving average using a uniform window
+            moving_avg = np.convolve(var, np.ones(window_size)/window_size, mode='same')
+            fig1 = plt.figure()
+            ax1 = fig1.add_subplot()
+            # Plot the original data
+            ax1.plot(smaller_roi_size_array, var, 'o')
+
+            # Plot the moving average, starting from the middle of the first window
+            ax1.plot(smaller_roi_size_array, moving_avg, '-')
+            
+            slider_ax = plt.axes([0.2, 0.06, 0.65, 0.03])  
+            slider = Slider(slider_ax, 'roi size', smaller_roi_size_array[0], smaller_roi_size_array[-1], valinit=smaller_roi_size_array[0], valstep=1)
+            
+            
+            # Display the initial frame
+            
+            def update_image_selection(idx):
+                idx -= smaller_roi_size_array[0]
+                roi_size = smaller_roi_size_array[int(idx)]
+                image_analysis = object_array[int(idx)]
+                plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
+
+            # Connect the sliders to the update function
+
+            slider.on_changed(update_image_selection)
+            
+            
+            plt.show()
+            
             
     def substract_nuclei_background(self):
         if hasattr(self, 'raw_mask'):
@@ -989,7 +1107,7 @@ class ImageAnalysis:
             # extract the response of the filter for each angle angle_array[i]
             temp = rot[:, :, i]
             
-            # set the response to zero if the corresponding pixel in the mask is zero
+            # set the response to nan if the corresponding pixel in the mask is zero
             temp[mask_rsize == 0] = np.nan
             
             # save the response
@@ -1186,21 +1304,27 @@ class ImageAnalysis:
             self.mean_ccf_all_roi = np.nanmean(all_ccf_roi, axis=0)
             self.std_mean_ccf_all_roi = np.nanstd(all_ccf_roi, axis=0, ddof=1)
             ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi], '-', color='#d13111', linewidth=1.8)
-            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] - self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8)
-            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] + self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8)
+            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] - self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8, label=r'$\overline{ACF}$')
+            ax.plot(lags, self.mean_ccf_all_roi[self.ind_roi] + self.std_mean_ccf_all_roi[self.ind_roi], '--', color='#d13111', linewidth=1.8, label=r'$\overline{ACF}\pm \sigma\left(ACF\right)$')
         else:
             lags = self.lags[self.ind]
-	        #df = pd.DataFrame()
-            #df['lags'] = self.lags[self.ind]
             ax.plot(np.tile(lags, (len(self.ccf_all_valid), 1)).T, self.ccf_all_valid[:, self.ind].T, color='#cccaca')
-            ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8)
-            ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
+            ax.plot(lags, self.mean_ccf[self.ind], '-', color='#d13111', linewidth=1.8, label=r'$\overline{ACF}$')
+            ax.plot(lags, self.mean_ccf[self.ind] - self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8, label=r'$\overline{ACF}\pm \sigma\left(ACF\right)$')
             ax.plot(lags, self.mean_ccf[self.ind] + self.std_mean_ccf[self.ind], '--', color='#d13111', linewidth=1.8)
-        
-        ax.set_xlabel(r'$\Delta$ x [$\mu$m]')
+
+        ax.set_xlabel(r' x [$\mu$m]')
+        ax.set_ylabel(r' ACF')
         ax.set_xlim(0,self.corr_length)
         ax.set_ylim(-0.5,1)
-        ax.set_ylabel('CCF')
+        for line in ax.lines:
+            if line.get_color() == '#cccaca':
+                line.set_label('ACF')
+                break  # Exit the loop after labeling the first matching line
+
+        # Add a legend to the plot
+        ax.legend()
+        
         
         # Add mean_ccf, mean_ccf - std_mean_ccf, and mean_ccf + std_mean_ccf to the DataFrame
         #df['mean_ccf'] = self.mean_ccf[self.ind]
@@ -1209,7 +1333,8 @@ class ImageAnalysis:
 
         # Save the DataFrame to a CSV file
         #df.to_csv('comparison/ccf_Parameter.csv', index=False)
-        plt.savefig('ccf_human.png', dpi=300)
+        #plt.savefig('ccf_human.png', dpi=300, bbox_inches='tight', pad_inches=0)
+      
         plt.show()
     
     def calc_fourier_peak_one_ccf(self, i, plot=False, upper_limit=3):
@@ -1923,7 +2048,7 @@ class ROI(ImageAnalysis):
         angles_rad = angles_deg * np.pi / 180
         
         #np.savetxt('comparison/angles_deg.csv', anglemap_nonzero, delimiter=',')
-        angles_rad, labels, mean_arr, std_arr, perc_arr = find_cluster(angles_rad, 3, min_diff_rad=30*np.pi/180, angle_max=np.pi, print_=True)
+        angles_rad, labels, mean_arr, std_arr, perc_arr = find_cluster(angles_rad, 3, min_diff_rad=30*np.pi/180, angle_max=np.pi, print_=False)
         idx = np.argmax(perc_arr)
         
         mean = mean_arr[idx]*180/np.pi
@@ -1934,10 +2059,9 @@ class ROI(ImageAnalysis):
         if max_angle-min_angle < 10:
             min_angle -=3
             max_angle +=3
-        if self.nAngles < 2 * int(np.floor(max_angle - min_angle)):
-            self.nAngles = 2 * int(np.floor(max_angle - min_angle))
+        self.nAngles = int(np.floor(max_angle - min_angle))
         angle_array = np.linspace(min_angle, max_angle, self.nAngles, endpoint=True)
-        print(f'applying steerable filter with {self.nAngles} angles between {round(min_angle, 2)} and {round(max_angle, 2)} degrees')
+        print(f'applying steerable filter with {self.nAngles} angles between {round(min_angle, 2)}° and {round(max_angle, 2)}°')
         angle_array = angle_array * np.pi / 180
         
         self.__apply_steerable_filter(angle_array)
@@ -1947,6 +2071,24 @@ class ROI(ImageAnalysis):
         self.xy_values_superclass = np.array([(x+self.x_borders[0], y+self.y_borders[0]) for x,y in self.xy_values_k0])
         
 def find_cluster(angles_rad, n_clusters, min_diff_rad=0, angle_max=np.pi, print_=False):
+    """
+    This function performs KMeans clustering on a set of angles.
+
+    Parameters:
+        - angles_rad (numpy.ndarray): The angles in radians.
+        - n_clusters (int): The number of clusters to form.
+        - min_diff_rad (float, optional): The minimum difference in radians between cluster means. Default is 0.
+        - angle_max (float, optional): The maximum angle in radians. Default is pi.
+        - print_ (bool, optional): If True, prints information about each cluster. Default is False.
+
+    Returns:
+    tuple: A tuple containing:
+        - angles_rad (numpy.ndarray): The input angles in radians, reshaped and NaN values removed.
+        - labels (numpy.ndarray): The labels of each point.
+        - mean_arr (numpy.ndarray): The mean angle of each cluster.
+        - std_arr (numpy.ndarray): The standard deviation of the angles in each cluster.
+        - perc_arr (numpy.ndarray): The percentage of points in each cluster.
+    """
     angles_rad = np.fmod(angles_rad, np.pi)
     angles_rad = angles_rad[~np.isnan(angles_rad)]
     angles_rad = angles_rad.flatten().reshape(-1, 1)
@@ -2236,7 +2378,7 @@ def interactive_image_analysis():
     mask_image = raw.copy()
     plt.imshow(mask_image, vmin=mask_image.min(), vmax=mask_image.max(), cmap='viridis')
     #tpl.save('figures/test.pgf', extra_axis_parameters={'height=0.5\textwidth','width=\textwidth'})
-    #plt.savefig('images_poster/test1.pgf')
+    #plt.savefig('figures/test1.pgf')
 
     
     raw_info = tif.pages[4*slice_index+mask_channel].tags
@@ -2256,6 +2398,21 @@ def interactive_image_analysis():
     tmp = input(f'Configure rectangular regions of interest manually? (y/N)')
     if tmp == 'y' or tmp == 'Y':
         image_analysis.select_roi_manually()
+        """fig, ax = plt.subplots()
+        ax.imshow(image_analysis.raw, vmin=image_analysis.raw.min(), vmax=image_analysis.raw.max())
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_title('')
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+
+        ax.axis('off')
+        roi = image_analysis.roi_instances[0]
+        polygon = Polygon(roi.corners, closed=True, edgecolor='r', fill=False, linewidth=1)
+        ax.add_patch(polygon)
+        fig.savefig('figures/roi.png', dpi=1200, bbox_inches='tight', pad_inches=0)"""
         
     change = True
     image_analysis.mask_background()
@@ -2299,7 +2456,10 @@ def interactive_image_analysis():
         else:
             change = False
     np.savetxt('comparison/anglemap_accum.csv', image_analysis.anglemap, delimiter=',')
-    image_analysis.apply_steerable_filter()#int(image_analysis.roi_size/2)
+    #image_analysis.vary_smaller_roi_size()
+    #return
+    image_analysis.apply_steerable_filter(int(image_analysis.roi_size/2))
+    
     plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
     
     
@@ -2331,9 +2491,10 @@ def interactive_image_analysis():
 def vary_roi_size(min, max, step=1):
     roi_size_arr = np.arange(min, max+step, step)
     var = np.zeros_like(roi_size_arr, dtype=float)
+    array = np.empty(len(roi_size_arr), dtype=ImageAnalysis)
     for i, roi_size in enumerate(roi_size_arr):
         start = time.time()
-        path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
+        path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_24hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
         #path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
         # load the image
         tif = TiffFile(path)
@@ -2368,7 +2529,37 @@ def vary_roi_size(min, max, step=1):
         var[i] = circvar(angles_rad, high=np.pi, low=0)
         
         print(f' {i+1}/{len(roi_size_arr)} done in {end-start  :.2f}s : roi_size = {roi_size}, var = {var[i]:.2f}')
-    plt.plot(roi_size_arr, var, 'o')
+        array[i] = copy.deepcopy(image_analysis)
+    
+    # Define the window size for the moving average
+    window_size = 5
+
+    # Calculate the moving average using a uniform window
+    moving_avg = np.convolve(var, np.ones(window_size)/window_size, mode='same')
+    fig1 = plt.figure()
+    ax1 = fig1.add_subplot()
+    # Plot the original data
+    ax1.plot(roi_size_arr, var, 'o')
+
+    # Plot the moving average, starting from the middle of the first window
+    ax1.plot(roi_size_arr, moving_avg, '-')
+    
+    slider_ax = plt.axes([0.2, 0.06, 0.65, 0.03])  
+    slider = Slider(slider_ax, 'roi size', roi_size_arr[0], roi_size_arr[-1], valinit=roi_size_arr[0], valstep=step)
+    
+    
+    # Display the initial frame
+    
+    def update_image_selection(idx):
+        roi_size = roi_size_arr[int(idx)]
+        image_analysis = array[int(idx)]
+        plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances)
+
+    # Connect the sliders to the update function
+
+    slider.on_changed(update_image_selection)
+    
+    
     plt.show()
     
 def save_images(human=False, nuclei=False):
@@ -2410,21 +2601,32 @@ def save_images(human=False, nuclei=False):
     fig, ax = plt.subplots()
     ax.imshow(image_analysis.raw, vmin=image_analysis.raw.min(), vmax=image_analysis.raw.max(), cmap='viridis')
     ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_title('')
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+
     ax.axis('off')
+   
     print(f'pixel size: {image_analysis.pixSize:.3f}µm')
     if human:
-        ax.set_title(f'Titin (human data)')
-        #tpl.save('images_poster/raw_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+        #ax.set_title(f'Titin (human data)')
+        #tpl.save('figures/raw_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+        fig.savefig('figures/raw_human.png', dpi=1200, bbox_inches='tight', pad_inches=0)
         if nuclei:
             fig, ax = plt.subplots()
             ax.set_aspect('equal')
-            ax.axis('off')
             ax.imshow(image_analysis.raw_nuclei, vmin=image_analysis.raw_nuclei.min(), vmax=image_analysis.raw_nuclei.max(), cmap='viridis')
-            ax.set_title(f'Nuclei ')
-            #tpl.save('images_poster/raw_nuclei_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+            #ax.set_title(f'Nuclei ')
+            #tpl.save('figures/raw_nuclei_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+            #fig.savefig('figures/raw_nuclei_human.svg')
     else:
-        ax.set_title(f'Sallimus (fly data)')
-        #tpl.save('images_poster/raw_fly.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+        #ax.set_title(f'Sallimus (fly data)')
+        tpl.save('figures/raw_fly.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
+        #plt.savefig('figures/raw_fly.png', dpi=1200, bbox_inches='tight', pad_inches=0)
     image_analysis.mask_background()
     if nuclei:
             param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances, image_analysis.nuclei_mask]
@@ -2432,6 +2634,10 @@ def save_images(human=False, nuclei=False):
         param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances]
     
     plot_mask_background(*param, tikz=True)
+    image_analysis.apply_steerable_filter()
+    plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances, tikz=True)
+    image_analysis.calc_all_ccf()
+
         
     
 def non_interactive():
@@ -2478,10 +2684,10 @@ def main():
     
     
     #interactive_image_analysis()
-    non_interactive()
+    #non_interactive()
     #vary_roi_size(15, 58, 1)
-    #save_images()
-    #save_images(human=True, nuclei=True)
+    save_images()
+    save_images(human=True, nuclei=True)
 
     
  
