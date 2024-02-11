@@ -21,4 +21,5 @@
 **/*.lot
 **/*.out
 **/*.lof
-
+**/comparison/**
+**/figures/**

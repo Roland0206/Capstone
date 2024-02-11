@@ -1420,12 +1420,20 @@ class ImageAnalysis:
                     factor += 1/10
                     clear = True
                     if factor > 1/2:
+                        if plot:
+                            tmp = f'{i}th ccf'
+                            fig.text(0.5, 0.02, tmp, ha='center')
+                            plt.show()
                         return None, None, None
                 elif np.abs(1/(popt[2]))>1.5* (lags[idx_3]-lags[idx_1]):
                     print(f"An error occurred during sine fitting for {i}th ccf: ", f'wavelength of fit is too large ({round(np.abs(1/popt[2]), 2)} >> {round(lags[idx_3]-lags[idx_1], 2)})')
                     factor += 1/10
                     clear = True
                     if factor > 1/2:
+                        if plot:
+                            tmp = f'{i}th ccf'
+                            fig.text(0.5, 0.02, tmp, ha='center')
+                            plt.show()
                         return None, None, None
                 else:
                     invalid_fit = False
@@ -1433,6 +1441,10 @@ class ImageAnalysis:
             except Exception as e:
                 invalid_fit = False
                 print(f"An error occurred during sine fitting for {i}th ccf: ", e)
+                if plot:
+                    tmp = f'{i}th ccf'
+                    fig.text(0.5, 0.02, tmp, ha='center')
+                    plt.show()
                 #fig, ax = plt.subplots(figsize=(12, 10))
                 #ax.plot(lags, ccf,'o', color='#cccaca')
                 #ax.vlines(lags_crop[0], min(ccf), max(ccf), color='red')
@@ -1610,15 +1622,18 @@ class ImageAnalysis:
                             j = int(np.floor((x - roi.nx0*self.roi_size)/roi.roi_size))
                             idx_n = np.ravel_multi_index((i, j), (roi.nGridY, roi.nGridX))
                             rect = Rectangle((roi.nx0*self.roi_size+j*roi.roi_size, roi.ny0*self.roi_size+i*roi.roi_size), roi.roi_size, roi.roi_size, linewidth=1, edgecolor='r', facecolor='r', alpha=0.4)
+                            
                             if n_click >0:
                                 # remove last patch from ax
                                 ax.patches[-1].remove()
                             ax.add_patch(rect)
+                            
+                            # Redraw the figure
+                            fig.canvas.draw()
                             if roi.ccf_mask[idx_n]:
                                 roi.calc_fourier_peak_one_ccf(idx_n, plot=True)
                             n_click += 1
-                            # Redraw the figure
-                            fig.canvas.draw()
+                            
                 else:
                     i = int(np.floor(y/self.roi_size))
                     j = int(np.floor(x/self.roi_size))
@@ -1628,6 +1643,8 @@ class ImageAnalysis:
                         # remove last patch from ax
                         ax.patches[-1].remove()
                     ax.add_patch(rect)
+                    # Redraw the figure
+                    fig.canvas.draw()
                     if self.ccf_mask[idx_n]:
                         self.calc_fourier_peak_one_ccf(idx_n, plot=True)
                     n_click += 1
@@ -2468,7 +2485,7 @@ def interactive_image_analysis():
     image_analysis.calc_all_ccf()
     #return image_analysis
     image_analysis.plot_top_x_roi_interactive(0.03)
-    save = True
+    save = False
     if save:
         #embed()
         if len(image_analysis.roi_instances) > 0:
@@ -2562,83 +2579,6 @@ def vary_roi_size(min, max, step=1):
     
     plt.show()
     
-def save_images(human=False, nuclei=False):
-    if human:
-        path = os.path.join('Data', 'Trial8_D12_488-TTNrb+633-MHCall_DAPI+568-Rhod_100X_01_stitched.tif')
-        mask_channel = 0
-        substrate1_channel = 0
-        substrate2_channel = 0
-        nuclei_channel = 2
-        slice_index = 9
-    else:
-        path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
-        mask_channel = 3
-        substrate1_channel = 3
-        substrate2_channel = 3
-        slice_index = 0
-        
-    tif = TiffFile(path)
-    n_slices = int(len(tif.pages)/4)
-    
-    image_analysis = ImageAnalysis()
-    raw = np.asarray(tif.pages[4*slice_index+mask_channel].asarray())
-    raw_info = tif.pages[4*slice_index+mask_channel].tags
-    
-    # get image factor
-    factor = raw_info['XResolution'].value[0]  # The Xresolution tag is a ratio, so we take the numerator
-    pixSize = 1 / factor * 10**(6) # Factor to go from pixels to micrometers
-    
-    image_analysis.set_mask_image(raw, pixSize)
-    image1 = np.asarray(tif.pages[4*slice_index + substrate1_channel].asarray())
-    image2 = np.asarray(tif.pages[4*slice_index + substrate2_channel].asarray())
-    image_analysis.set_subtrate1_image(image1)
-    image_analysis.set_substrate2_image(image2)
-    if human and nuclei:
-        nuclei_image = np.asarray(tif.pages[4*slice_index + nuclei_channel].asarray())
-        image_analysis.set_nuclei_image(nuclei_image)
-    
-    # plot input image
-    fig, ax = plt.subplots()
-    ax.imshow(image_analysis.raw, vmin=image_analysis.raw.min(), vmax=image_analysis.raw.max(), cmap='viridis')
-    ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.set_title('')
-    ax.set_xlabel('')
-    ax.set_ylabel('')
-
-    ax.axis('off')
-   
-    print(f'pixel size: {image_analysis.pixSize:.3f}µm')
-    if human:
-        #ax.set_title(f'Titin (human data)')
-        #tpl.save('figures/raw_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
-        fig.savefig('figures/raw_human.png', dpi=1200, bbox_inches='tight', pad_inches=0)
-        if nuclei:
-            fig, ax = plt.subplots()
-            ax.set_aspect('equal')
-            ax.imshow(image_analysis.raw_nuclei, vmin=image_analysis.raw_nuclei.min(), vmax=image_analysis.raw_nuclei.max(), cmap='viridis')
-            #ax.set_title(f'Nuclei ')
-            #tpl.save('figures/raw_nuclei_human.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
-            #fig.savefig('figures/raw_nuclei_human.svg')
-    else:
-        #ax.set_title(f'Sallimus (fly data)')
-        tpl.save('figures/raw_fly.pgf', extra_axis_parameters={'width=\\textwidth', 'axis equal'})
-        #plt.savefig('figures/raw_fly.png', dpi=1200, bbox_inches='tight', pad_inches=0)
-    image_analysis.mask_background()
-    if nuclei:
-            param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances, image_analysis.nuclei_mask]
-    else:
-        param = [image_analysis.raw_mask,image_analysis.raw_roi_mask, *image_analysis.get_mask_Parameter(), image_analysis.roi_instances]
-    
-    plot_mask_background(*param, tikz=True)
-    image_analysis.apply_steerable_filter()
-    plot_steerable_filter_results(image_analysis.raw, image_analysis.res, image_analysis.xy_values_k0, image_analysis.steerable_sigma, image_analysis.roi_instances, tikz=True)
-    image_analysis.calc_all_ccf()
-
-        
     
 def non_interactive():
     path = os.path.join('Data', '2023.06.12_MhcGFPweeP26_30hrsAPF_Phallo568_647nano62actn_405nano2sls_100Xz2.5_1_2.tif')
@@ -2671,7 +2611,7 @@ def non_interactive():
     image_analysis.calc_all_ccf()
     #return image_analysis
     image_analysis.plot_top_x_roi_interactive()
-    save = True
+    save = False
     if save:
         
         np.savetxt('comparison/lags.csv', image_analysis.lags[image_analysis.ind], delimiter=',')
@@ -2684,10 +2624,8 @@ def main():
     
     
     #interactive_image_analysis()
-    #non_interactive()
+    non_interactive()
     #vary_roi_size(15, 58, 1)
-    save_images()
-    save_images(human=True, nuclei=True)
 
     
  
