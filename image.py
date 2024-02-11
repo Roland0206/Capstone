@@ -2623,8 +2623,8 @@ def non_interactive():
 def main():
     
     
-    #interactive_image_analysis()
-    non_interactive()
+    interactive_image_analysis()
+    #non_interactive()
     #vary_roi_size(15, 58, 1)
 
     
